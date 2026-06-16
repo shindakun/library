@@ -139,9 +139,9 @@ Move import off the library grid into its own page, cleaner and purpose-built:
   to the imported book; failed rows show the error and a link to `import/failed/`.
 - Reuses `app.css`/`app.js` (theme, layout). No framework; this is a list that
   mutates on SSE events, plus one `<progress>` element per row.
-- The library page keeps a small "N importing..." indicator linking to `/imports`
-  (so you see activity without leaving the grid), or drop the inline upload
-  control there entirely in favor of the dedicated page. (Decide during build.)
+- Decided during build: the inline upload control is dropped from the library
+  grid entirely; the grid header now carries an "Import" nav button to `/imports`,
+  which owns the upload control and the live list.
 
 ## 6. Build order
 
@@ -161,9 +161,20 @@ Move import off the library grid into its own page, cleaner and purpose-built:
    `web.New`). Tested with a real httptest listener: snapshot endpoint, empty
    case, and the live SSE stream (snapshot + post-connect update + disconnect).
    Race-clean.
-3. **Import page**: `imports.html` + `imports.js`, the relocated upload control,
-   the live list + progress bars. Browser-verified by the user (JS is checked
-   statically, per the project's frontend-verification convention).
+3. **Import page** (DONE): `GET /imports` renders `imports.html` (header with the
+   relocated upload control + a back-to-library link); the library grid now links
+   to it via an "Import" nav button instead of an inline upload form.
+   `js/imports.js` opens `/api/imports/stream`, keeps a `Map<id, row>`, upserts
+   one `<li>` per job by stable id (snapshot burst seeds it; deltas update in
+   place), renders name/format/state/step and a `<progress>` bar while running
+   (determinate when `job.progress > 0`, indeterminate otherwise). Done rows link
+   to `/read/<slug>`; failed rows show the error; skipped rows note the duplicate.
+   `EventSource` auto-reconnects and the server replays a snapshot on connect, so
+   reconnection self-heals; a no-SSE fallback does a one-shot `/api/imports` fetch.
+   Styles appended to `css/app.css`. Verified statically: `/imports` renders 200
+   with the `job-list` mount and `imports.js`/`app.css` serving 200
+   (`TestImportsPageServes`); JS behavior is for the user to confirm in-browser,
+   per the project's frontend-verification convention.
 4. **Progress callback plumbing**: thread an `onProgress` through `pipeline()` and
    the `drm.Client`; the sidecar steps report transitions. (CBR's real percentage
    arrives with COMIC_SUPPORT.md.)
@@ -184,9 +195,10 @@ Move import off the library grid into its own page, cleaner and purpose-built:
   If import parallelism is ever added, the job model already supports N running.
 - **Retention policy** (count vs TTL) is a tuning detail; start with "last 50 or
   10 minutes, whichever is larger."
-- **Does the library page keep an inline upload control,** or is `/imports` the
-  only entry point? Lean toward a dedicated page with a small activity indicator
-  on the grid; finalize during build.
+- **Library page inline upload control:** resolved. `/imports` is the single
+  upload entry point; the grid links to it with an "Import" nav button (no inline
+  upload form). A "N importing..." activity indicator on the grid is a possible
+  later nicety, not built yet.
 
 ## 8. Risks / notes
 

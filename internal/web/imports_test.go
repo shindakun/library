@@ -126,3 +126,36 @@ func waitEvent(t *testing.T, ch <-chan *ingest.Job) *ingest.Job {
 		return nil
 	}
 }
+
+// TestImportsPageServes verifies the dedicated import page renders and its
+// client assets are reachable: the page must wire in imports.js and expose the
+// job-list mount point, and the script + stylesheet must serve 200.
+func TestImportsPageServes(t *testing.T) {
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/imports", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/imports status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`id="job-list"`,
+		`/static/js/imports.js`,
+		`action="/api/upload"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/imports page missing %q", want)
+		}
+	}
+
+	for _, asset := range []string{"/static/js/imports.js", "/static/css/app.css"} {
+		ar := httptest.NewRecorder()
+		mux.ServeHTTP(ar, httptest.NewRequest(http.MethodGet, asset, nil))
+		if ar.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want 200", asset, ar.Code)
+		}
+	}
+}

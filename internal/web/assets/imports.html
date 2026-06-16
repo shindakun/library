@@ -1,0 +1,38 @@
+{{define "imports.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import &middot; Library</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script>
+  // Pre-paint theme apply (inline so there is no flash before app.js loads).
+  (function () {
+    const saved = localStorage.getItem("theme");
+    const dark = saved ? saved === "dark"
+                       : matchMedia("(prefers-color-scheme: dark)").matches;
+    if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  })();
+</script>
+<script src="/static/js/app.js" defer></script>
+<script src="/static/js/imports.js" defer></script>
+</head>
+<body>
+<header>
+  <h1><a class="home" href="/">Library</a> / Import</h1>
+  <form id="upload-form" class="upload" method="post" action="/api/upload" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".acsm,.epub" required>
+    <button type="submit">Import</button>
+  </form>
+  <button id="theme-btn" class="theme-toggle" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">&#127769;</button>
+</header>
+
+<div class="imports-wrap">
+  <p class="hint">Upload an <code>.acsm</code> or <code>.epub</code> above, or drop files
+  into <code>data/import/</code>. Progress appears below as each file is fulfilled,
+  decrypted, and indexed.</p>
+  <ul id="job-list" class="job-list"></ul>
+  <p id="job-empty" class="empty">No imports yet.</p>
+</div>
+</body>
+</html>{{end}}

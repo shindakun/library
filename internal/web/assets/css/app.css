@@ -23,6 +23,8 @@ body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background:var(--bg); co
 header { padding: 16px 24px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; gap:16px; align-items:center; }
 header h1 { font-size:18px; margin:0; }
 header form.upload { margin-left:auto; }
+header .nav-import { margin-left:auto; padding:7px 12px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; text-decoration:none; font-size:14px; }
+header .nav-import:hover { opacity:.9; }
 input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); border-radius:8px; width:260px; background:var(--panel); color:var(--fg); }
 .upload { display:flex; gap:8px; align-items:center; }
 .upload input[type=file]{ font-size:13px; max-width:230px; color:var(--fg); }
@@ -75,3 +77,28 @@ html.reader, body.reader { height:100%; margin:0; }
 #bar a { color:var(--link); text-decoration:none; }
 #viewer { height:calc(100% - 44px); background:var(--bg); }
 #bar button { border:1px solid var(--btn-border); background:var(--bar); color:var(--fg); border-radius:6px; padding:4px 10px; cursor:pointer; }
+
+/* Import page: header link + live job list with per-row progress. */
+.home { color:var(--fg); text-decoration:none; }
+.home:hover { text-decoration:underline; }
+.imports-wrap { padding:24px; max-width:760px; }
+.imports-wrap .hint { color:var(--muted); font-size:14px; margin:0 0 20px; }
+.imports-wrap .hint code { background:var(--cover-bg); padding:1px 5px; border-radius:4px; }
+.job-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.job { border:1px solid var(--border); background:var(--panel); border-radius:10px; padding:12px 14px; }
+.job-head { display:flex; align-items:baseline; gap:10px; }
+.job-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.job-name a { color:var(--fg); text-decoration:none; }
+.job-name a:hover { text-decoration:underline; }
+.job-format { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--faint); border:1px solid var(--border); border-radius:5px; padding:1px 6px; }
+.job-state { margin-left:auto; font-size:12px; padding:2px 9px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+.job-state.running { color:var(--banner-fg); background:var(--banner-bg); border-color:var(--banner-border); }
+.job-state.done    { color:var(--accent); border-color:var(--accent); }
+.job-state.failed  { color:#c0392b; border-color:#c0392b; }
+.job-state.skipped { color:var(--faint); }
+.job-step { font-size:13px; color:var(--muted); margin-top:6px; }
+.job-error { font-size:13px; color:#c0392b; margin-top:6px; word-break:break-word; }
+.job progress { width:100%; height:6px; margin-top:8px; appearance:none; -webkit-appearance:none; border:none; border-radius:999px; background:var(--cover-bg); overflow:hidden; }
+.job progress::-webkit-progress-bar { background:var(--cover-bg); border-radius:999px; }
+.job progress::-webkit-progress-value { background:var(--accent); border-radius:999px; }
+.job progress::-moz-progress-bar { background:var(--accent); border-radius:999px; }

@@ -66,6 +66,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/scan", s.apiScan)
 	mux.HandleFunc("POST /api/upload", s.apiUpload)
 	mux.HandleFunc("POST /api/setup", s.apiSetup)
+	mux.HandleFunc("GET /imports", s.imports)
 	mux.HandleFunc("GET /api/imports", s.apiImports)
 	mux.HandleFunc("GET /api/imports/stream", s.apiImportsStream)
 	// Static JS/CSS (epub.js lives here once vendored).
@@ -277,6 +278,11 @@ func (s *Server) apiScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int{"indexed": n})
+}
+
+// imports renders the dedicated import page (upload control + live job list).
+func (s *Server) imports(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "imports.html", nil)
 }
 
 // apiImports returns a snapshot of current/recent import jobs. Used for the

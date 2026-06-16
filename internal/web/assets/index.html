@@ -20,11 +20,8 @@
 <header>
   <h1>Library</h1>
   {{if not .NeedsSetup}}
-  <form class="upload" method="post" action="/api/upload" enctype="multipart/form-data">
-    <input type="file" name="file" accept=".acsm,.epub" required>
-    <button type="submit">Import</button>
-  </form>
-  <form method="get" action="/">
+  <a class="nav-import" href="/imports">Import</a>
+  <form class="search" method="get" action="/">
     <input type="search" name="q" placeholder="Search title, author…" value="{{.Query}}">
   </form>
   <button id="view-btn" class="view-toggle" type="button" onclick="toggleView()" title="Toggle grid/table view">Table</button>
