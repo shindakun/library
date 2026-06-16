@@ -6,11 +6,13 @@ secrets.bak/
 secrets*.bak/
 *.bak/
 
-# Loan/purchase tokens and any books: local only.
+# Loan/purchase tokens and any books/comics: local only.
 *.acsm
 *.epub
 *.pdf
 *.der
+*.cbz
+*.cbr
 
 # Library data (the library dir, db, import staging)
 /data/library/*

@@ -16,3 +16,6 @@ if/when the feature is wanted; nothing here is wired into the running system.
   metadata editing.
 - [proposals/COMIC_SUPPORT.md](proposals/COMIC_SUPPORT.md): CBZ/CBR comic
   import, cataloging, and a browser comic viewer.
+- [proposals/IMPORT_PROGRESS.md](proposals/IMPORT_PROGRESS.md): import-job
+  tracking, live SSE progress, and a dedicated import page (prerequisite for
+  comic CBR->CBZ conversion).
