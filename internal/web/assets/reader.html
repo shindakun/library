@@ -1,133 +1,36 @@
 {{define "reader.html"}}<!doctype html>
-<html lang="en">
+<html lang="en" class="reader">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Book.Title}}</title>
-<style>
-  :root { --bg:#fafafa; --fg:#1a1a1a; --bar:#fff; --border:#e3e3e6; --link:#444; --btn-border:#ccc; }
-  [data-theme="dark"] { --bg:#16181c; --fg:#e6e6e8; --bar:#1f2228; --border:#30343c; --link:#bcd; --btn-border:#3a3f48; }
-  html,body{height:100%;margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
-  #bar{height:44px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--bar)}
-  #bar a{color:var(--link);text-decoration:none}
-  #viewer{height:calc(100% - 44px);background:var(--bg)}
-  button{border:1px solid var(--btn-border);background:var(--bar);color:var(--fg);border-radius:6px;padding:4px 10px;cursor:pointer}
-</style>
+<link rel="stylesheet" href="/static/css/app.css">
 <script>
+  // Pre-paint theme apply (inline so there is no flash before app.js loads).
   (function () {
     const saved = localStorage.getItem("theme");
     const dark = saved ? saved === "dark"
                        : matchMedia("(prefers-color-scheme: dark)").matches;
     if (dark) document.documentElement.setAttribute("data-theme", "dark");
   })();
-  function toggleTheme() {
-    const el = document.documentElement;
-    const dark = el.getAttribute("data-theme") !== "dark";
-    el.setAttribute("data-theme", dark ? "dark" : "light");
-    localStorage.setItem("theme", dark ? "dark" : "light");
-    repaintForTheme();
-  }
+  window.BOOK_SLUG = "{{.Book.Slug}}";
 </script>
+<script src="/static/js/app.js" defer></script>
 </head>
-<body>
+<body class="reader">
 <div id="bar">
   <a href="/">&larr; Library</a>
   <strong>{{.Book.Title}}</strong>
   <span style="margin-left:auto"></span>
-  <button onclick="rendition.prev()">Prev</button>
-  <button onclick="rendition.next()">Next</button>
+  <button onclick="readerPrev()">Prev</button>
+  <button onclick="readerNext()">Next</button>
   <button id="theme-btn" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
 </div>
 <div id="viewer"></div>
 
-<!-- epub.js + jszip are vendored into /static (embedded in the binary). -->
-<script src="/static/jszip.min.js"></script>
-<script src="/static/epub.min.js"></script>
-<script>
-  const bookSlug = "{{.Book.Slug}}";
-
-  // IMPORTANT: our file URL is /book/{slug}/file with NO ".epub" extension, and
-  // epub.js's determineType() sniffs the URL extension; with none, it wrongly
-  // treats the book as an exploded directory and renders nothing. So we fetch
-  // the bytes ourselves and hand epub.js an ArrayBuffer, which it always opens
-  // as a binary archive. (Robust regardless of URL shape or Content-Type.)
-  let rendition;
-  fetch("/book/" + bookSlug + "/file")
-    .then(r => {
-      if (!r.ok) throw new Error("download failed: " + r.status);
-      return r.arrayBuffer();
-    })
-    .then(buf => {
-      const book = ePub(buf);
-      rendition = book.renderTo("viewer", { width: "100%", height: "100%", flow: "paginated" });
-      // Register themes epub.js injects into the book iframe. The `!important`
-      // is required: the book's own stylesheet (and epub.js's injected CSS)
-      // otherwise win over a plain rule and the change wouldn't show.
-      rendition.themes.register("dark", {
-        "body": { "background": "#16181c !important", "color": "#d8d8db !important" },
-        "p, div, span, h1, h2, h3, h4, h5, h6, li": { "color": "#d8d8db !important" },
-        "a": { "color": "#9ad !important" }
-      });
-      rendition.themes.register("light", {
-        "body": { "background": "#ffffff !important", "color": "#1a1a1a !important" }
-      });
-      // Select the theme BEFORE first paint so the book renders correctly the
-      // first time (no re-display needed here; that's only for live toggles).
-      applyReaderTheme();
-      return rendition.display();
-    })
-    .then(() => {
-      // Persist reading position to the catalog.
-      let saveTimer;
-      rendition.on("relocated", (loc) => {
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-          fetch(`/api/books/${bookSlug}/read`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cfi: loc.start.cfi, percent: loc.start.percentage || 0 })
-          });
-        }, 800);
-      });
-    })
-    .catch(err => {
-      document.getElementById("viewer").innerHTML =
-        '<p style="padding:24px;color:#b00">Could not open this book: ' + err.message + '</p>';
-      console.error("reader:", err);
-    });
-
-  // Select the current theme on the rendition (always safe; epub.js applies it
-  // on the next/initial render). Updates the toggle button too.
-  function applyReaderTheme() {
-    const dark = document.documentElement.getAttribute("data-theme") === "dark";
-    const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = dark ? "☀️" : "🌙";
-    if (rendition && rendition.themes) rendition.themes.select(dark ? "dark" : "light");
-  }
-
-  // On a USER toggle, the book iframe is already painted and epub.js's
-  // themes.select() does NOT restyle already-rendered content. The reliable fix
-  // is to tear down the rendered views (rendition.clear) and re-display the
-  // current location, which rebuilds the iframe with the new theme applied.
-  function repaintForTheme() {
-    applyReaderTheme();
-    if (!rendition) return;
-    let cfi;
-    try {
-      const loc = rendition.currentLocation();
-      cfi = loc && loc.start && loc.start.cfi;
-    } catch (_) { return; } // not rendered yet; first paint will use the theme
-    if (!cfi) return;
-    if (typeof rendition.clear === "function") rendition.clear();
-    rendition.display(cfi);
-  }
-  document.addEventListener("DOMContentLoaded", applyReaderTheme);
-
-  document.addEventListener("keydown", (e) => {
-    if (!rendition) return;
-    if (e.key === "ArrowLeft") rendition.prev();
-    if (e.key === "ArrowRight") rendition.next();
-  });
-</script>
+<!-- epub.js + jszip are vendored under /static/vendor (embedded in the binary). -->
+<script src="/static/vendor/jszip.min.js"></script>
+<script src="/static/vendor/epub.min.js"></script>
+<script src="/static/js/reader.js"></script>
 </body>
 </html>{{end}}
