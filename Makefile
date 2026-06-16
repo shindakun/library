@@ -9,6 +9,10 @@ COMPOSE      ?= docker compose
 COMPOSE_FILE := docker/docker-compose.yml
 DC           := $(COMPOSE) -f $(COMPOSE_FILE)
 
+# Production stack (Proxmox: pulls prebuilt images from GHCR, no local build).
+PROD_FILE    := docker/docker-compose.prod.yml
+DC_PROD      := $(COMPOSE) -f $(PROD_FILE)
+
 # LAN IP baked into OPDS links so the Xteink X4 can fetch them. Auto-detected;
 # override with `make up LIBRARY_BASE_URL=http://host:8080`.
 LANIP             ?= $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo 127.0.0.1)
@@ -107,6 +111,35 @@ ps: ## Show stack status
 
 .PHONY: restart
 restart: down up ## Restart the stack
+
+## ---- Production (Proxmox: GHCR images, no local build) ----
+# Run these ON the Proxmox guest. Set LIBRARY_BASE_URL to the host LAN address,
+# and IMAGE/TAG if not using the defaults baked into the prod compose file.
+
+.PHONY: prod-pull
+prod-pull: ## Pull the latest prod images from GHCR
+	$(DC_PROD) pull
+
+.PHONY: prod-up
+prod-up: ## Start the prod stack (pulls images, runs detached)
+	$(DC_PROD) up -d --pull always
+
+.PHONY: prod-down
+prod-down: ## Stop and remove the prod stack
+	$(DC_PROD) down
+
+.PHONY: prod-logs
+prod-logs: ## Follow prod stack logs
+	$(DC_PROD) logs -f
+
+.PHONY: prod-ps
+prod-ps: ## Show prod stack status
+	$(DC_PROD) ps
+
+.PHONY: prod-deploy
+prod-deploy: ## Pull newest images and restart the prod stack in place
+	$(DC_PROD) pull
+	$(DC_PROD) up -d
 
 ## ---- DRM setup ----
 

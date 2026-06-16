@@ -1,0 +1,47 @@
+# Production compose for the Proxmox deploy (LXC + Docker, Linux/amd64).
+#
+# Unlike docker-compose.yml (the Mac/Podman dev file), this PULLS prebuilt
+# images from GHCR instead of building, and drops the Mac-Podman-only bits
+# (userns_mode: keep-id, SELinux :z/:Z relabels). Set IMAGE and TAG to point at
+# your registry images, and LIBRARY_BASE_URL to the host's LAN address.
+#
+#   IMAGE=ghcr.io/<owner>/<repo> TAG=latest \
+#   LIBRARY_BASE_URL=http://<lan-ip>:8080 \
+#   docker compose -f docker/docker-compose.prod.yml up -d
+#
+# State lives in ./data and ./secrets relative to where you run compose; on the
+# Proxmox guest, put those on a persistent path (e.g. a mounted dataset).
+services:
+  library:
+    image: ${IMAGE:-ghcr.io/steve/library}-library:${TAG:-latest}
+    ports:
+      - "8080:8080"
+    environment:
+      LIBRARY_DATA: /data
+      LIBRARY_BASE_URL: ${LIBRARY_BASE_URL:-http://localhost:8080}
+      DRM_SIDECAR_URL: http://drm-sidecar:7000
+    volumes:
+      - ./data:/data
+    networks:
+      - libnet
+    depends_on:
+      - drm-sidecar
+    restart: unless-stopped
+
+  drm-sidecar:
+    image: ${IMAGE:-ghcr.io/steve/library}-drm-sidecar:${TAG:-latest}
+    environment:
+      SECRETS_DIR: /secrets
+      WORK_DIR: /data/import/work
+    volumes:
+      # Writable so the web first-run setup form can populate /secrets. After
+      # setup it is only read by fulfill/decrypt. (CLI setup works either way.)
+      - ./secrets:/secrets
+      - ./data:/data
+    networks:
+      - libnet
+    restart: unless-stopped
+
+networks:
+  libnet:
+    driver: bridge

@@ -1,6 +1,10 @@
 # Secrets: Adobe activation + decryption keys. NEVER commit.
 /secrets/*
 !/secrets/.gitkeep
+# Any backup/copy of the secrets dir (activation.xml, device.xml, devicesalt, keys).
+secrets.bak/
+secrets*.bak/
+*.bak/
 
 # Loan/purchase tokens and any books: local only.
 *.acsm
