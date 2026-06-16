@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Pre-commit hook for the library project. Wire it up once with:
+#   git config core.hooksPath .githooks
+#
+# Runs the same checks CI runs, but only on what you're about to commit, so a
+# bad commit is caught locally. Skips cleanly if a tool isn't installed.
+set -euo pipefail
+
+fail=0
+
+# Only act on staged Go files for the Go checks (fast, focused).
+staged_go=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+staged_md=$(git diff --cached --name-only --diff-filter=ACM | grep '\.md$' || true)
+
+# 1. gofmt: every staged Go file must be formatted.
+if [ -n "$staged_go" ]; then
+  unformatted=$(gofmt -l $staged_go || true)
+  if [ -n "$unformatted" ]; then
+    echo "pre-commit: gofmt needed on:" >&2
+    echo "$unformatted" | sed 's/^/  /' >&2
+    echo "  run: gofmt -w $unformatted" >&2
+    fail=1
+  fi
+fi
+
+# 2. go vet (whole module; fast and catches real bugs).
+if [ -n "$staged_go" ]; then
+  if ! go vet ./... 2>&1; then
+    echo "pre-commit: go vet failed" >&2
+    fail=1
+  fi
+fi
+
+# 3. golangci-lint (the configured linter set). Skips if not installed.
+if [ -n "$staged_go" ]; then
+  if command -v golangci-lint >/dev/null 2>&1; then
+    if ! golangci-lint run ./...; then
+      echo "pre-commit: golangci-lint found issues" >&2
+      fail=1
+    fi
+  else
+    echo "pre-commit: golangci-lint not installed, skipping (brew install golangci-lint)" >&2
+  fi
+fi
+
+# 4. markdownlint on staged markdown. Skips if not installed.
+if [ -n "$staged_md" ]; then
+  if command -v markdownlint >/dev/null 2>&1; then
+    if ! markdownlint $staged_md; then
+      echo "pre-commit: markdownlint found issues" >&2
+      fail=1
+    fi
+  fi
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: checks failed; commit aborted (use 'git commit --no-verify' to bypass)." >&2
+  exit 1
+fi

@@ -81,7 +81,7 @@ func (c *Client) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("sidecar health: status %d", resp.StatusCode)
 	}
@@ -99,7 +99,7 @@ func (c *Client) do(ctx context.Context, jr jobRequest) (*jobResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sidecar unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var jres jobResponse
 	if err := json.NewDecoder(resp.Body).Decode(&jres); err != nil {

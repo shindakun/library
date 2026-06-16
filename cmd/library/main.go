@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("open catalog: %v", err)
 	}
-	defer cat.Close()
+	defer func() { _ = cat.Close() }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -91,10 +91,10 @@ func main() {
 		}
 	}()
 	importer := &ingest.Importer{
-		Cat:       cat,
-		DRM:       drmClient,
-		ImportDir: importDir,
-		LibraryDir:  libraryDir,
+		Cat:        cat,
+		DRM:        drmClient,
+		ImportDir:  importDir,
+		LibraryDir: libraryDir,
 		// The sidecar sees the shared volume at SIDECAR_DATA (default /data); the
 		// Go service sees it at *dataDir. In compose both are /data, so this is a
 		// no-op. When the Go service runs on the HOST (dev) against a containerized
@@ -116,7 +116,7 @@ func main() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		srv.Shutdown(sctx)
+		_ = srv.Shutdown(sctx)
 	}()
 
 	log.Printf("library listening on %s (base URL %s)", *addr, *baseURL)

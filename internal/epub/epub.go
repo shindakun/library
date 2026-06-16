@@ -73,7 +73,7 @@ func Read(epubPath string) (*Metadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open epub: %w", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	return read(&zr.Reader)
 }
 
@@ -123,7 +123,7 @@ func read(zr *zip.Reader) (*Metadata, error) {
 		case meta.Name == "calibre:series":
 			m.Series = strings.TrimSpace(meta.Content)
 		case meta.Name == "calibre:series_index":
-			fmt.Sscanf(meta.Content, "%f", &m.SeriesIndex)
+			_, _ = fmt.Sscanf(meta.Content, "%f", &m.SeriesIndex)
 		case meta.Property == "belongs-to-collection" && m.Series == "":
 			m.Series = strings.TrimSpace(meta.Value)
 		}
@@ -147,7 +147,7 @@ func findOPFPath(zr *zip.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	var c container
 	if err := xml.NewDecoder(rc).Decode(&c); err != nil {
 		return "", fmt.Errorf("parse container.xml: %w", err)
@@ -167,7 +167,7 @@ func parseOPF(zr *zip.Reader, opfPath string) (*opfPackage, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	var pkg opfPackage
 	if err := xml.NewDecoder(rc).Decode(&pkg); err != nil {
 		return nil, fmt.Errorf("parse opf: %w", err)
@@ -220,13 +220,13 @@ func IsADEPTEncrypted(epubPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	// rights.xml is the strongest ADEPT signal.
 	if f := openFile(&zr.Reader, "META-INF/rights.xml"); f != nil {
 		if rc, err := f.Open(); err == nil {
 			data, _ := io.ReadAll(rc)
-			rc.Close()
+			_ = rc.Close()
 			if bytes.Contains(data, []byte("ns.adobe.com/adept")) {
 				return true, nil
 			}
@@ -237,7 +237,7 @@ func IsADEPTEncrypted(epubPath string) (bool, error) {
 	if f := openFile(&zr.Reader, "META-INF/encryption.xml"); f != nil {
 		if rc, err := f.Open(); err == nil {
 			data, _ := io.ReadAll(rc)
-			rc.Close()
+			_ = rc.Close()
 			if bytes.Contains(data, []byte("ns.adobe.com/adept")) {
 				return true, nil
 			}
@@ -252,7 +252,7 @@ func CoverImage(epubPath string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	opfPath, err := findOPFPath(&zr.Reader)
 	if err != nil {
@@ -275,7 +275,7 @@ func CoverImage(epubPath string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		return nil, "", err

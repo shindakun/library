@@ -26,12 +26,12 @@ func TestLibraryRelPath(t *testing.T) {
 
 func TestSafeFilename(t *testing.T) {
 	cases := map[string]string{
-		"Chaos Vector":               "Chaos Vector",
-		"Frankenstein; or, The Foo":  "Frankenstein; or, The Foo",
-		"A/B: C*D?":                  "A_B_ C_D_",
-		`weird"<>|name`:              "weird____name", // 4 illegal chars: " < > |
-		"":                           "book", // empty -> fallback
-		"////":                       "____", // all-illegal stays non-empty
+		"Chaos Vector":              "Chaos Vector",
+		"Frankenstein; or, The Foo": "Frankenstein; or, The Foo",
+		"A/B: C*D?":                 "A_B_ C_D_",
+		`weird"<>|name`:             "weird____name", // 4 illegal chars: " < > |
+		"":                          "book",          // empty -> fallback
+		"////":                      "____",          // all-illegal stays non-empty
 	}
 	for in, want := range cases {
 		if got := SafeFilename(in); got != want {

@@ -17,12 +17,12 @@ func newTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	imp := filepath.Join(dir, "import")
-	os.MkdirAll(imp, 0o755)
+	_ = os.MkdirAll(imp, 0o755)
 	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), filepath.Join(dir, "library"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cat.Close() })
+	t.Cleanup(func() { _ = cat.Close() })
 	s, err := New(cat, imp)
 	if err != nil {
 		t.Fatal(err)
@@ -38,8 +38,8 @@ func uploadReq(t *testing.T, filename, content, accept string) *http.Request {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fw.Write([]byte(content))
-	mw.Close()
+	_, _ = fw.Write([]byte(content))
+	_ = mw.Close()
 	req := httptest.NewRequest(http.MethodPost, "/api/upload", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	if accept != "" {

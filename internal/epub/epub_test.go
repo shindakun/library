@@ -17,12 +17,12 @@ func writeEPUB(t *testing.T, files map[string]string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	// The spec wants "mimetype" first and stored; we don't rely on that for
 	// parsing, but include it so the fixture is realistic.
 	mw, _ := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	mw.Write([]byte("application/epub+zip"))
+	_, _ = mw.Write([]byte("application/epub+zip"))
 	for name, content := range files {
 		w, err := zw.Create(name)
 		if err != nil {
@@ -115,7 +115,7 @@ func TestRead_NotAnEPUB(t *testing.T) {
 	}
 	// A non-zip file must error too.
 	bad := filepath.Join(t.TempDir(), "notzip.epub")
-	os.WriteFile(bad, []byte("not a zip"), 0o644)
+	_ = os.WriteFile(bad, []byte("not a zip"), 0o644)
 	if _, err := Read(bad); err == nil {
 		t.Fatal("expected error for non-zip file")
 	}

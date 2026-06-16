@@ -34,10 +34,23 @@ vet: ## go vet
 tidy: ## go mod tidy
 	go mod tidy
 
+.PHONY: lint
+lint: ## Run golangci-lint (needs: brew install golangci-lint)
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found: brew install golangci-lint"; exit 1; }
+	golangci-lint run ./...
+
 .PHONY: lint-md
 lint-md: ## Lint markdown docs (needs: npm i -g markdownlint-cli)
 	@command -v markdownlint >/dev/null 2>&1 || { echo "markdownlint not found: npm install -g markdownlint-cli"; exit 1; }
 	markdownlint *.md docs/*.md
+
+.PHONY: check
+check: vet lint test ## Run all Go checks (vet + lint + test); mirrors CI
+
+.PHONY: hooks
+hooks: ## Install the repo git hooks (gofmt/vet/lint/markdownlint on commit)
+	git config core.hooksPath .githooks
+	@echo "git hooks installed (core.hooksPath = .githooks)"
 
 .PHONY: run
 run: ## Run the server locally on the host (needs a running sidecar for imports)

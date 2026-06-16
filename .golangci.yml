@@ -1,0 +1,23 @@
+# golangci-lint v2 config. Standard, high-signal linter set for a solo project.
+version: "2"
+
+linters:
+  enable:
+    - errcheck      # unchecked errors
+    - govet         # suspicious constructs
+    - staticcheck   # broad correctness + simplification (subsumes gosimple/stylecheck in v2)
+    - ineffassign   # ineffectual assignments
+    - unused        # unused code
+    - misspell      # common spelling mistakes in comments/strings
+  settings:
+    misspell:
+      locale: US
+      # "Calibre" is the product name (and "calibre:series" a real metadata key);
+      # "cancelled" is valid British spelling used in a comment.
+      ignore-rules:
+        - calibre
+        - cancelled
+
+formatters:
+  enable:
+    - gofmt

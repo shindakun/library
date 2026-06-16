@@ -57,7 +57,7 @@ func (b *Book) Slug() string {
 
 // Catalog owns the DB handle and the books root directory.
 type Catalog struct {
-	db        *sql.DB
+	db          *sql.DB
 	libraryRoot string
 }
 
@@ -70,7 +70,7 @@ func Open(dbPath, libraryRoot string) (*Catalog, error) {
 	}
 	c := &Catalog{db: db, libraryRoot: libraryRoot}
 	if err := c.migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return c, nil
@@ -122,7 +122,7 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	id, err := upsertBook(ctx, tx, rel, hash, info.Size(), source, meta, existingID)
 	if err != nil {
@@ -196,7 +196,7 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 	}
 
 	// Refresh the FTS row.
-	tx.ExecContext(ctx, `DELETE FROM books_fts WHERE rowid=?`, id)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM books_fts WHERE rowid=?`, id)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO books_fts (rowid, title, authors, description) VALUES (?,?,?,?)`,
 		id, meta.Title, strings.Join(meta.Authors, " "), meta.Description); err != nil {
 		return 0, err
@@ -264,20 +264,20 @@ func (c *Catalog) Prune(ctx context.Context) (int, error) {
 		var id int64
 		var rel string
 		if err := rows.Scan(&id, &rel); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, err
 		}
 		if _, err := os.Stat(filepath.Join(c.libraryRoot, rel)); os.IsNotExist(err) {
 			missing = append(missing, id)
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	for _, id := range missing {
 		if _, err := c.db.ExecContext(ctx, `DELETE FROM books WHERE id=?`, id); err != nil {
 			return 0, err
 		}
-		c.db.ExecContext(ctx, `DELETE FROM books_fts WHERE rowid=?`, id)
+		_, _ = c.db.ExecContext(ctx, `DELETE FROM books_fts WHERE rowid=?`, id)
 	}
 	return len(missing), nil
 }
@@ -317,7 +317,7 @@ func (c *Catalog) Reorganize(ctx context.Context) (int, error) {
 		// Tidy a now-empty source directory (e.g. the old flat root won't be
 		// empty, but per-author folders may be).
 		if dir := filepath.Dir(srcAbs); dir != c.libraryRoot {
-			os.Remove(dir) // no-op if non-empty
+			_ = os.Remove(dir) // no-op if non-empty
 		}
 		moved++
 	}
@@ -399,7 +399,7 @@ func (c *Catalog) List(ctx context.Context, opts ListOptions) ([]*Book, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
@@ -493,20 +493,20 @@ func (c *Catalog) loadBooks(ctx context.Context, ids []int64) ([]*Book, error) {
 		rows, _ := c.db.QueryContext(ctx, `SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id=a.id WHERE ba.book_id=? ORDER BY a.name`, id)
 		for rows.Next() {
 			var n string
-			rows.Scan(&n)
+			_ = rows.Scan(&n)
 			b.Authors = append(b.Authors, n)
 		}
-		rows.Close()
+		_ = rows.Close()
 
-		c.db.QueryRowContext(ctx, `SELECT s.name, bs.idx FROM series s JOIN book_series bs ON bs.series_id=s.id WHERE bs.book_id=?`, id).Scan(&b.Series, &b.SeriesIndex)
+		c.db.QueryRowContext(ctx, `SELECT s.name, bs.idx FROM series s JOIN book_series bs ON bs.series_id=s.id WHERE bs.book_id=?`, id).Scan(&b.Series, &b.SeriesIndex) //nolint:errcheck // best-effort: absent series leaves zero values
 
 		rows, _ = c.db.QueryContext(ctx, `SELECT scheme, value FROM identifiers WHERE book_id=?`, id)
 		for rows.Next() {
 			var s, v string
-			rows.Scan(&s, &v)
+			_ = rows.Scan(&s, &v)
 			b.Identifiers[s] = v
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	out := make([]*Book, 0, len(order))
@@ -537,7 +537,7 @@ func hashFile(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err

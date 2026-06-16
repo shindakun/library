@@ -31,10 +31,10 @@ import (
 //	import/done/   <- originals move here on success
 //	import/failed/ <- originals move here on failure (with a .log sibling)
 type Importer struct {
-	Cat       *catalog.Catalog
-	DRM       *drm.Client
-	ImportDir string // host path watched for new files
-	LibraryDir  string // where clean epubs land
+	Cat        *catalog.Catalog
+	DRM        *drm.Client
+	ImportDir  string // host path watched for new files
+	LibraryDir string // where clean epubs land
 	// SidecarPath maps a host import path to the path the sidecar sees for the
 	// same file (shared volume mounted at a possibly-different path). For the
 	// common case where both mount the same volume at the same path, set it to
@@ -54,7 +54,7 @@ func (im *Importer) cleanWorkDir() {
 		return
 	}
 	for _, e := range entries {
-		os.RemoveAll(filepath.Join(im.workDir(), e.Name()))
+		_ = os.RemoveAll(filepath.Join(im.workDir(), e.Name()))
 	}
 }
 
@@ -89,13 +89,15 @@ func (im *Importer) workDir() string { return filepath.Join(im.ImportDir, "work"
 // files already present at startup.
 func (im *Importer) Run(ctx context.Context) error {
 	for _, sub := range []string{"work", "done", "failed"} {
-		os.MkdirAll(filepath.Join(im.ImportDir, sub), 0o755)
+		if err := os.MkdirAll(filepath.Join(im.ImportDir, sub), 0o755); err != nil {
+			return fmt.Errorf("create import subdir %s: %w", sub, err)
+		}
 	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	if err := w.Add(im.ImportDir); err != nil {
 		return err
 	}
@@ -197,7 +199,7 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	if hash, herr := catalog.FileHash(cleanHostPath); herr == nil {
 		if dup, _ := im.Cat.HasHash(ctx, hash); dup {
 			fmt.Printf("import: %s is already in the library (duplicate content), skipping\n", filepath.Base(hostPath))
-			moveFile(hostPath, filepath.Join(im.ImportDir, "done", filepath.Base(hostPath)))
+			im.archive(hostPath, "done")
 			return
 		}
 	}
@@ -223,7 +225,7 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	// done/. In the direct-import path the original WAS the clean file and has
 	// already been moved into the library, so there's nothing left to archive.
 	if cleanHostPath != hostPath {
-		moveFile(hostPath, filepath.Join(im.ImportDir, "done", filepath.Base(hostPath)))
+		im.archive(hostPath, "done")
 	}
 	fmt.Printf("import: done %s\n", filepath.Base(hostPath))
 }
@@ -273,8 +275,22 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string) (string, erro
 func (im *Importer) fail(hostPath string, cause error) {
 	fmt.Fprintf(os.Stderr, "import: FAILED %s: %v\n", filepath.Base(hostPath), cause)
 	dst := filepath.Join(im.ImportDir, "failed", filepath.Base(hostPath))
-	moveFile(hostPath, dst)
-	os.WriteFile(dst+".log", []byte(cause.Error()+"\n"), 0o644)
+	if err := moveFile(hostPath, dst); err != nil {
+		fmt.Fprintf(os.Stderr, "import: could not move %s to failed/: %v\n", filepath.Base(hostPath), err)
+		return
+	}
+	if err := os.WriteFile(dst+".log", []byte(cause.Error()+"\n"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "import: could not write %s.log: %v\n", filepath.Base(dst), err)
+	}
+}
+
+// archive moves a processed original into the given import subdir (done/failed),
+// logging on failure. A stuck original would otherwise be reprocessed.
+func (im *Importer) archive(hostPath, sub string) {
+	dst := filepath.Join(im.ImportDir, sub, filepath.Base(hostPath))
+	if err := moveFile(hostPath, dst); err != nil {
+		fmt.Fprintf(os.Stderr, "import: could not archive %s to %s/: %v\n", filepath.Base(hostPath), sub, err)
+	}
 }
 
 // uniquePath returns p, or p with a " (2)", " (3)", … suffix before the
@@ -315,13 +331,13 @@ func moveFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
 	if _, err := out.ReadFrom(in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	if err := out.Close(); err != nil {

@@ -22,7 +22,7 @@ func newTestCatalog(t *testing.T) (*Catalog, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() { _ = c.Close() })
 	return c, books
 }
 
@@ -35,11 +35,11 @@ func makeEPUB(t *testing.T, libraryDir, file, title, author string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	add := func(name, content string) {
 		w, _ := zw.Create(name)
-		w.Write([]byte(content))
+		_, _ = w.Write([]byte(content))
 	}
 	add("META-INF/container.xml", `<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -129,7 +129,7 @@ func TestPruneRemovesJoinRows(t *testing.T) {
 	if _, err := c.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(p)
+	_ = os.Remove(p)
 	if _, err := c.Prune(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestListSortRecent(t *testing.T) {
 func TestSlugIsStableAcrossRebuild(t *testing.T) {
 	dir := t.TempDir()
 	libraryDir := filepath.Join(dir, "library")
-	os.MkdirAll(libraryDir, 0o755)
+	_ = os.MkdirAll(libraryDir, 0o755)
 	makeEPUB(t, libraryDir, "a.epub", "Alpha", "Author")
 
 	// First DB: index and capture the slug.
@@ -217,11 +217,11 @@ func TestSlugIsStableAcrossRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c1.Scan(context.Background())
+	_, _ = c1.Scan(context.Background())
 	b1, _ := c1.List(context.Background(), ListOptions{})
 	slug := b1[0].Slug()
 	id1 := b1[0].ID
-	c1.Close()
+	_ = c1.Close()
 
 	if slug == "" || len(slug) != 16 {
 		t.Fatalf("slug = %q, want 16 hex chars", slug)
@@ -233,8 +233,8 @@ func TestSlugIsStableAcrossRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c2.Close()
-	c2.Scan(context.Background())
+	defer func() { _ = c2.Close() }()
+	_, _ = c2.Scan(context.Background())
 
 	got, err := c2.GetBySlug(context.Background(), slug)
 	if err != nil {
@@ -317,11 +317,11 @@ func TestReadStateRoundTrips(t *testing.T) {
 
 func TestSortKey(t *testing.T) {
 	cases := map[string]string{
-		"The Hobbit":      "hobbit",
-		"A Wizard of Earthsea": "wizard of earthsea",
+		"The Hobbit":            "hobbit",
+		"A Wizard of Earthsea":  "wizard of earthsea",
 		"An Inconvenient Truth": "inconvenient truth",
-		"Dune":            "dune",
-		"  The Stand ":    "stand", // trimmed first, then the "The " article is stripped
+		"Dune":                  "dune",
+		"  The Stand ":          "stand", // trimmed first, then the "The " article is stripped
 	}
 	for in, want := range cases {
 		if got := sortKey(in); got != want {

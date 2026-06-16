@@ -109,7 +109,7 @@ func (s *Server) cover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", mime)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) apiBooks(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no file field", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
 	if ext != ".acsm" && ext != ".epub" {
@@ -184,16 +184,16 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpPath := tmp.Name()
 	if _, err := io.Copy(tmp, file); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		http.Error(w, "write failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	tmp.Close()
+	_ = tmp.Close()
 
 	dest := filepath.Join(s.ImportDir, name)
 	if err := os.Rename(tmpPath, dest); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		http.Error(w, "finalize failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -238,7 +238,7 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func mustSub(fsys embed.FS, dir string) fs.FS {

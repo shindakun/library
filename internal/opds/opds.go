@@ -52,19 +52,19 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // --- Atom/OPDS document model --------------------------------------------
 
 const (
-	nsAtom        = "http://www.w3.org/2005/Atom"
-	typeNavFeed   = "application/atom+xml;profile=opds-catalog;kind=navigation"
-	typeAcqFeed   = "application/atom+xml;profile=opds-catalog;kind=acquisition"
-	typeEpub      = "application/epub+zip"
-	relSelf       = "self"
-	relStart      = "start"
-	relNext       = "next"
-	relPrev       = "previous"
-	relSearch     = "search"
-	relAcq        = "http://opds-spec.org/acquisition"
-	relImage      = "http://opds-spec.org/image"
-	relThumb      = "http://opds-spec.org/image/thumbnail"
-	typeOpenSrch  = "application/opensearchdescription+xml"
+	nsAtom       = "http://www.w3.org/2005/Atom"
+	typeNavFeed  = "application/atom+xml;profile=opds-catalog;kind=navigation"
+	typeAcqFeed  = "application/atom+xml;profile=opds-catalog;kind=acquisition"
+	typeEpub     = "application/epub+zip"
+	relSelf      = "self"
+	relStart     = "start"
+	relNext      = "next"
+	relPrev      = "previous"
+	relSearch    = "search"
+	relAcq       = "http://opds-spec.org/acquisition"
+	relImage     = "http://opds-spec.org/image"
+	relThumb     = "http://opds-spec.org/image/thumbnail"
+	typeOpenSrch = "application/opensearchdescription+xml"
 )
 
 type feed struct {
@@ -85,12 +85,12 @@ type link struct {
 }
 
 type entry struct {
-	ID      string  `xml:"id"`
-	Title   string  `xml:"title"`
-	Updated string  `xml:"updated"`
+	ID      string   `xml:"id"`
+	Title   string   `xml:"title"`
+	Updated string   `xml:"updated"`
 	Authors []author `xml:"author"`
 	Content *content `xml:"content,omitempty"`
-	Links   []link  `xml:"link"`
+	Links   []link   `xml:"link"`
 }
 
 type author struct {
@@ -212,7 +212,7 @@ func (h *Handler) bookEntry(b *catalog.Book) entry {
 // Crosspoint uses to offer in-catalog search.
 func (h *Handler) openSearchDesc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", typeOpenSrch)
-	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
+	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
   <ShortName>Library</ShortName>
   <Description>Search the library</Description>
@@ -261,10 +261,10 @@ func now() string { return time.Now().UTC().Format(time.RFC3339) }
 
 func writeFeed(w http.ResponseWriter, f *feed) {
 	w.Header().Set("Content-Type", typeAcqFeed)
-	w.Write([]byte(xml.Header))
+	_, _ = w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
-	enc.Encode(f)
+	_ = enc.Encode(f)
 }
 
 // Ensure ctx import is used even if handlers are trimmed during edits.

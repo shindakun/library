@@ -20,7 +20,7 @@ func mockSidecar(t *testing.T, handler func(op string, w http.ResponseWriter)) *
 		}
 		body, _ := io.ReadAll(r.Body)
 		var req jobRequest
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 		w.Header().Set("Content-Type", "application/json")
 		handler(req.Op, w)
 	}))
@@ -31,7 +31,7 @@ func mockSidecar(t *testing.T, handler func(op string, w http.ResponseWriter)) *
 
 func TestFulfillSuccess(t *testing.T) {
 	c := mockSidecar(t, func(op string, w http.ResponseWriter) {
-		json.NewEncoder(w).Encode(jobResponse{OK: true, Output: "/work/book.epub", Format: "epub"})
+		_ = json.NewEncoder(w).Encode(jobResponse{OK: true, Output: "/work/book.epub", Format: "epub"})
 	})
 	out, err := c.Fulfill(context.Background(), "/work/x.acsm")
 	if err != nil {
@@ -45,7 +45,7 @@ func TestFulfillSuccess(t *testing.T) {
 func TestFulfillRejectsNonEpub(t *testing.T) {
 	// A PDF fulfillment must be rejected (v1 supports epub only).
 	c := mockSidecar(t, func(op string, w http.ResponseWriter) {
-		json.NewEncoder(w).Encode(jobResponse{OK: true, Output: "/work/book.pdf", Format: "pdf"})
+		_ = json.NewEncoder(w).Encode(jobResponse{OK: true, Output: "/work/book.pdf", Format: "pdf"})
 	})
 	if _, err := c.Fulfill(context.Background(), "/work/x.acsm"); err == nil {
 		t.Error("expected error for non-epub fulfillment")
@@ -56,7 +56,7 @@ func TestFulfillPropagatesSidecarError(t *testing.T) {
 	// Sidecar reports failure (e.g. expired .acsm); the client must surface it.
 	c := mockSidecar(t, func(op string, w http.ResponseWriter) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(jobResponse{OK: false, Error: "E_ADEPT_REQUEST_EXPIRED"})
+		_ = json.NewEncoder(w).Encode(jobResponse{OK: false, Error: "E_ADEPT_REQUEST_EXPIRED"})
 	})
 	_, err := c.Fulfill(context.Background(), "/work/x.acsm")
 	if err == nil {
@@ -72,7 +72,7 @@ func TestDecryptSuccess(t *testing.T) {
 		if op != "decrypt" {
 			t.Errorf("expected op=decrypt, got %q", op)
 		}
-		json.NewEncoder(w).Encode(jobResponse{OK: true, Output: "/work/clean.epub", Format: "epub"})
+		_ = json.NewEncoder(w).Encode(jobResponse{OK: true, Output: "/work/clean.epub", Format: "epub"})
 	})
 	out, err := c.Decrypt(context.Background(), "/work/enc.epub")
 	if err != nil {

@@ -43,14 +43,14 @@ func TestUniquePath(t *testing.T) {
 	}
 
 	// Create it; next call must suffix " (2)".
-	os.WriteFile(base, []byte("x"), 0o644)
+	_ = os.WriteFile(base, []byte("x"), 0o644)
 	want2 := filepath.Join(dir, "Book (2).epub")
 	if got := uniquePath(base); got != want2 {
 		t.Errorf("uniquePath with 1 collision = %q, want %q", got, want2)
 	}
 
 	// Create (2) as well; next must be " (3)".
-	os.WriteFile(want2, []byte("x"), 0o644)
+	_ = os.WriteFile(want2, []byte("x"), 0o644)
 	want3 := filepath.Join(dir, "Book (3).epub")
 	if got := uniquePath(base); got != want3 {
 		t.Errorf("uniquePath with 2 collisions = %q, want %q", got, want3)
@@ -68,8 +68,8 @@ func TestMoveFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "sub", "dst.txt")
-	os.MkdirAll(filepath.Dir(dst), 0o755)
-	os.WriteFile(src, []byte("hello"), 0o644)
+	_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+	_ = os.WriteFile(src, []byte("hello"), 0o644)
 
 	if err := moveFile(src, dst); err != nil {
 		t.Fatal(err)

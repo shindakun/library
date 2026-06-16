@@ -46,12 +46,12 @@ func newHandler(t *testing.T, n int) *Handler {
 	t.Helper()
 	dir := t.TempDir()
 	books := filepath.Join(dir, "library")
-	os.MkdirAll(books, 0o755)
+	_ = os.MkdirAll(books, 0o755)
 	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), books)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cat.Close() })
+	t.Cleanup(func() { _ = cat.Close() })
 	for i := 0; i < n; i++ {
 		writeMinEPUB(t, books, fmt.Sprintf("b%03d.epub", i), fmt.Sprintf("Book %03d", i), "Author")
 	}
@@ -67,13 +67,13 @@ func writeMinEPUB(t *testing.T, dir, file, title, author string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
-	add := func(n, c string) { w, _ := zw.Create(n); w.Write([]byte(c)) }
+	add := func(n, c string) { w, _ := zw.Create(n); _, _ = w.Write([]byte(c)) }
 	add("META-INF/container.xml", `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`)
 	add("content.opf", `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>`+title+`</dc:title><dc:creator>`+author+`</dc:creator></metadata><manifest><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/></manifest></package>`)
 	add("c.xhtml", "<html/>")
-	zw.Close()
+	_ = zw.Close()
 }
 
 func do(t *testing.T, h *Handler, path string) (*http.Response, parsedFeed) {
