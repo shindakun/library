@@ -42,9 +42,10 @@ internal/drm/        Go client that drives the sidecar
 internal/fileutil/   small shared filesystem helpers
 docker/              container stack (compose + Dockerfiles)
   docker-compose.yml two-service stack; paths are relative to docker/
-  Dockerfile         Go service image (distroless, ~16 MB)
-  sidecar/           Python DRM worker (worker.py) + one-time setup (setup.py)
+  Dockerfile         Go service image (distroless, ~30 MB)
+  sidecar/           Python DRM worker (worker.py) + CLI setup (setup.py)
 data/library/        clean EPUBs (the library); sorted by author then title in the UI
+data/covers/         extracted cover-image cache, keyed by slug (derived, safe to wipe)
 data/import/         drop or upload .acsm / .epub here -> pipeline -> library
   import/work/       sidecar scratch (NOT watched)
   import/done/       originals archived here on success
@@ -54,23 +55,35 @@ secrets/             Adobe activation + .der key (gitignored, never committed)
 
 ## Quick start (Makefile)
 
-Everything is driven from the repo root via `make`. Run `make help` for the list.
+Everything is driven from the repo root via `make`. Run `make help` for the full
+list; the common ones:
 
 ```sh
-make build           # build the Go binary to ./bin/library
+# Develop
+make build           # build the version-stamped Go binary to ./bin/library
 make test            # run Go tests
-make drm-setup       # ONE-TIME: authorize Adobe + export key into ./secrets (interactive)
+make check           # vet + lint + test (mirrors CI)
+make lint            # golangci-lint
+make hooks           # install the git pre-commit hook (gofmt/vet/lint/markdownlint)
+
+# Run the local stack (dev: builds images, macOS/Podman)
+make drm-setup       # ONE-TIME: authorize Adobe + export key into ./secrets (or use the web form)
 make up              # build images + start the stack (LAN IP auto-detected)
 make ps              # stack status
 make logs            # follow logs
 make down            # stop + remove the stack
 make time-sync       # fix the Podman VM clock if ADEPT fulfillment fails (see below)
+
+# Release + production (see docs/DEPLOY.md)
+make release VERSION=v0.1.0   # tag + push; CI builds GHCR images and cuts the release
+make prod-up                  # start the prod stack from GHCR images
+make prod-deploy              # pull newest images and restart in place
 ```
 
-`make up` auto-detects your LAN IP and bakes it into the OPDS links so the X4 can
-reach them. Override with `make up LIBRARY_BASE_URL=http://192.168.1.20:8080`.
+`make up` auto-detects your LAN IP and bakes it into the OPDS links so e-readers
+can reach them. Override with `make up LIBRARY_BASE_URL=http://192.168.1.20:8080`.
 
-After `make up`, on the X4: add an OPDS server pointing at
+After `make up`, point an OPDS client (the X4 or another e-reader) at
 `http://<lan-ip>:8080/opds`. The browser library is at `http://<lan-ip>:8080/`.
 
 ## Run locally without containers (catalog + reader + OPDS, no DRM)
@@ -167,8 +180,8 @@ focuses on the logic that has bitten us or that protects the device/data:
 
 - **catalog**: scan/index idempotency, **prune** of deleted files (incl. cascade
   of join rows), author>title sort ordering, FTS search.
-- **opds**: the X4 paging invariant: feeds capped at `PageSize`, correct
-  next/prev boundaries, root-is-navigation-only.
+- **opds**: the paging invariant (protects memory-constrained clients): feeds
+  capped at `PageSize`, correct next/prev boundaries, root-is-navigation-only.
 - **epub**: metadata parse, ADEPT-DRM detection (incl. *not* flagging IDPF font
   obfuscation), identifier/scheme guessing.
 - **drm**: sidecar client against a mock server: success, non-epub rejection,

@@ -224,19 +224,22 @@ them together.
 
 ```sql
 CREATE TABLE books (
-  id            INTEGER PRIMARY KEY,
-  title         TEXT NOT NULL,
-  sort_title    TEXT,
-  path          TEXT NOT NULL UNIQUE,   -- relative to /data/library, e.g. "Author/Title.epub"
-  file_size     INTEGER,
-  file_hash     TEXT,                   -- sha256, dedupe + change detection
-  cover_path    TEXT,                   -- relative to cover cache
-  language      TEXT,
-  published     TEXT,
-  description    TEXT,
-  added_at      INTEGER NOT NULL,
-  source        TEXT                    -- 'acsm' | 'epub-import' | 'scan'
+  id          INTEGER PRIMARY KEY,
+  title       TEXT NOT NULL,
+  sort_title  TEXT,
+  path        TEXT NOT NULL UNIQUE,   -- relative to /data/library, e.g. "Author/Title.epub"
+  file_size   INTEGER,
+  file_hash   TEXT,                   -- sha256: dedupe, change detection, and the slug
+  language    TEXT,
+  publisher   TEXT,
+  description TEXT,
+  published   TEXT,
+  has_cover   INTEGER NOT NULL DEFAULT 0,
+  added_at    INTEGER NOT NULL,
+  source      TEXT                    -- 'acsm' | 'epub-import' | 'scan'
 );
+-- Covers are not a column: they are cached on disk at data/covers/<slug>.<ext>
+-- (slug = first 16 hex of file_hash); see 5.6, 5.7.
 CREATE TABLE authors  (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
 CREATE TABLE book_authors (book_id INT, author_id INT, PRIMARY KEY(book_id,author_id));
 CREATE TABLE series   (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
