@@ -54,7 +54,7 @@ lint: ## Run golangci-lint (needs: brew install golangci-lint)
 .PHONY: lint-md
 lint-md: ## Lint markdown docs (needs: npm i -g markdownlint-cli)
 	@command -v markdownlint >/dev/null 2>&1 || { echo "markdownlint not found: npm install -g markdownlint-cli"; exit 1; }
-	markdownlint *.md docs/*.md
+	markdownlint '*.md' 'docs/**/*.md'
 
 .PHONY: check
 check: vet lint test ## Run all Go checks (vet + lint + test); mirrors CI

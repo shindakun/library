@@ -11,7 +11,8 @@ way in.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale, and
 [docs/DEPLOY.md](docs/DEPLOY.md) for deploying the compose stack on any Docker
-host (with notes for a Proxmox LXC).
+host (with notes for a Proxmox LXC). The [docs/](docs/) index lists everything,
+including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
 
 ## Architecture (two containers)
 
