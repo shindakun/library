@@ -39,7 +39,7 @@ services:
   drm-sidecar:
     build: ./sidecar
     userns_mode: keep-id
-    # Not published to the host — only reachable on the internal compose network.
+    # Not published to the host; only reachable on the internal compose network.
     environment:
       SECRETS_DIR: /secrets
       WORK_DIR: /data/import/work # sidecar scratch, OUTSIDE the watched import/

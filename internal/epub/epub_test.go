@@ -125,7 +125,7 @@ func TestIsADEPTEncrypted_Synthetic(t *testing.T) {
 	adeptRights := `<?xml version="1.0"?><rights xmlns="http://ns.adobe.com/adept"><licenseToken/></rights>`
 	adeptEnc := `<?xml version="1.0"?><encryption xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
 		<enc:EncryptedData><KeyInfo xmlns="http://ns.adobe.com/adept"/></enc:EncryptedData></encryption>`
-	// Font obfuscation uses the IDPF namespace, NOT Adobe — must read as clean.
+	// Font obfuscation uses the IDPF namespace, NOT Adobe, must read as clean.
 	idpfFontEnc := `<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 		<EncryptedData><EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/></EncryptedData></encryption>`
 

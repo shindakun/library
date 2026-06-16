@@ -1,4 +1,4 @@
-# Library — root Makefile. Drives the Go build/test and the containerized stack.
+# Library root Makefile. Drives the Go build/test and the containerized stack.
 #
 # The container stack lives in docker/ (compose file + Dockerfiles). We use
 # `docker compose` because on this host it talks to Podman through the
@@ -47,7 +47,7 @@ run: ## Run the server locally on the host (needs a running sidecar for imports)
 #
 # The Podman machine VM's clock drifts when the Mac sleeps. Fedora CoreOS ships
 # chrony with `makestep 1.0 3`, which steps the clock only for the first 3
-# updates — so after a big sleep-induced jump it refuses to correct, leaving the
+# updates, so after a big sleep-induced jump it refuses to correct, leaving the
 # container minutes behind real time. Adobe then rejects ADEPT fulfillment with
 # E_ADEPT_REQUEST_EXPIRED (the signed request looks stale). This target installs
 # a drop-in that lets chrony ALWAYS step on a large offset, then forces a sync.
@@ -66,7 +66,7 @@ check-clock: ## Warn if the Podman VM clock is skewed (used as an `up` guard)
 	@HOST=$$(date -u +%s); VM=$$(podman machine ssh date -u +%s 2>/dev/null || echo $$HOST); \
 		SKEW=$$((HOST-VM)); SKEW=$${SKEW#-}; \
 		if [ $$SKEW -gt 5 ]; then \
-			echo "WARNING: Podman VM clock is $$SKEW s off — ADEPT fulfillment will fail."; \
+			echo "WARNING: Podman VM clock is $$SKEW s off; ADEPT fulfillment will fail."; \
 			echo "         Run 'make time-sync' to fix it."; \
 		fi
 

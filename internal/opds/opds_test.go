@@ -93,7 +93,7 @@ func do(t *testing.T, h *Handler, path string) (*http.Response, parsedFeed) {
 	return res, f
 }
 
-// TestRootIsNavigationOnly enforces that the root feed lists NO books — only
+// TestRootIsNavigationOnly enforces that the root feed lists NO books, only
 // bounded subsection links. This is what keeps the X4 from being handed the
 // whole library at the entry point.
 func TestRootIsNavigationOnly(t *testing.T) {

@@ -1,4 +1,4 @@
-# Library — Design Document
+# Library: Design Document
 
 A self-hosted ebook library. Stores EPUBs, serves a browser-based reader, exposes an
 OPDS catalog the Xteink X4 (Crosspoint firmware) browses over WiFi, and ingests
@@ -46,15 +46,15 @@ summaries. The findings below drive the sidecar design.
 
 `Leseratte10/acsm-calibre-plugin` is a pure-Python reimplementation of `libgourou`. It
 turns an `.acsm` file into an EPUB/PDF **without Adobe Digital Editions**. Crucially, it
-ships **standalone scripts that run with no Calibre GUI and no Calibre at all** — they
+ships **standalone scripts that run with no Calibre GUI and no Calibre at all**: they
 depend only on the bundled `libadobe*` modules plus `lxml`:
 
-- `register_ADE_account.py` — one-time: authorize an Adobe ID (or anonymous), producing
+- `register_ADE_account.py`: one-time: authorize an Adobe ID (or anonymous), producing
   `activation.xml`, `device.xml`, `devicesalt`.
-- `fulfill.py URLLink.acsm` — fulfills the `.acsm`: contacts Adobe, downloads the book,
+- `fulfill.py URLLink.acsm`: fulfills the `.acsm`: contacts Adobe, downloads the book,
   and (for EPUB) writes `META-INF/rights.xml` into the zip. **The output is still
-  ADEPT-encrypted** — fulfillment ≠ decryption.
-- `get_key_from_Adobe.py` — exports the account's decryption key as
+  ADEPT-encrypted**: fulfillment ≠ decryption.
+- `get_key_from_Adobe.py`: exports the account's decryption key as
   `adobekey_<mail>_uuid_<uuid>.der`. (Confirmed in source: it logs in, calls
   `exportAccountEncryptionKeyDER`, writes a `.der`.)
 
@@ -63,7 +63,7 @@ So `fulfill.py` gets us a **DRM-laden EPUB**, and `get_key_from_Adobe.py` gets u
 
 ### 2.2 What `DeDRM_tools` (noDRM fork) does with that
 
-`noDRM/DeDRM_tools` contains `DeDRM_plugin/ineptepub.py` + `adobekey.py` — the ADEPT EPUB
+`noDRM/DeDRM_tools` contains `DeDRM_plugin/ineptepub.py` + `adobekey.py`: the ADEPT EPUB
 decryptor. It consumes exactly the `.der` key produced above. Two ways to run it:
 
 - **Inside Calibre (CLI, headless):** `calibre-customize --add DeDRM_plugin.zip`, drop the
@@ -78,12 +78,12 @@ decryptor. It consumes exactly the `.der` key produced above. Two ways to run it
 The acsm-calibre-plugin README states: when used **inside Calibre with noDRM's DeDRM
 fork installed**, the key export → import step "will happen automatically." That convenience only exists in
 the *GUI plugin pairing*. The sidecar does not get it for free, and does not need it: the
-key is driven explicitly (§4.2). The two repos compose directly — acsm-calibre-plugin
-fulfills, DeDRM strips — with the sidecar controlling the seam.
+key is driven explicitly (§4.2). The two repos compose directly (acsm-calibre-plugin
+fulfills, DeDRM strips) with the sidecar controlling the seam.
 
 ### 2.4 Two integration strategies (we pick B)
 
-> **Strategy A — "Calibre as the engine."** Run full Calibre headless. Install both plugins
+> **Strategy A, "Calibre as the engine."** Run full Calibre headless. Install both plugins
 > via `calibre-customize`. Fulfill `.acsm` through the ACSM *input* plugin, decrypt through
 > DeDRM, manage everything with `calibredb`.
 >
@@ -93,7 +93,7 @@ fulfills, DeDRM strips — with the sidecar controlling the seam.
 >   format that would fight our Go catalog, and a heavier, GUI-shaped dependency. The
 >   ACSM-as-input-format path is GUI-centric and awkward to trigger per-file headlessly.
 >
-> **Strategy B — "Scripts as tools" (CHOSEN).** Ignore Calibre entirely. The sidecar runs
+> **Strategy B, "Scripts as tools" (CHOSEN).** Ignore Calibre entirely. The sidecar runs
 > only the three standalone `acsm-calibre-plugin` scripts + DeDRM's `ineptepub.py`, all
 > pure-Python (`lxml`, `pycryptodome`). The Go service orchestrates them as plain CLI steps:
 > `fulfill.py` → `ineptepub.py`. No Calibre, no `calibredb`, no second metadata store.
@@ -131,7 +131,7 @@ the thing we're replacing.
 
 Two containers, one job each, composed with `docker-compose`. The Go binary **never
 imports Python**; it invokes the sidecar per job. Because DRM import is occasional, the
-sidecar is run `--rm` on demand — no long-lived Python process.
+sidecar is run `--rm` on demand, with no long-lived Python process.
 
 ---
 
@@ -153,7 +153,7 @@ Run inside the sidecar image, interactively, the first time:
 
 A file enters `/data/import/` either by a direct drop or via the web upload
 endpoint (`POST /api/upload`, staged atomically). The watcher uses **fsnotify
-plus a 5-second polling fallback** — inotify events do NOT cross the macOS →
+plus a 5-second polling fallback**: inotify events do NOT cross the macOS →
 Podman-VM bind mount, so polling is what actually makes imports fire there; the
 in-flight dedupe keeps the two paths from racing. Imports are serialized so the
 shared `work/` scratch can be wiped cleanly after each job.
@@ -195,7 +195,7 @@ drm-sidecar <step> <args>`.
 Packages: `internal/catalog` (SQLite: index/scan/prune/reorganize/query),
 `internal/epub` (metadata, cover, ADEPT detection), `internal/opds` (the paged
 feed), `internal/web` (HTTP only: UI, reader, upload, file/cover, JSON API),
-`internal/ingest` (the import watcher + DRM pipeline — independent of HTTP),
+`internal/ingest` (the import watcher + DRM pipeline, independent of HTTP),
 `internal/drm` (Go client driving the sidecar), and `internal/fileutil` (shared
 filename/path helpers, incl. the `Author/Title.epub` layout). `cmd/library` wires
 them together.
@@ -281,22 +281,22 @@ This is the load-bearing interop point, so it gets called out explicitly:
 #### 5.4.1 PAGING IS MANDATORY (X4 must never get an unbounded feed)
 
 The X4 runs on an **ESP32C3 with very little RAM**. Handing its OPDS client one giant
-acquisition feed — every book in the library serialized into a single Atom document — can
+acquisition feed (every book in the library serialized into a single Atom document) can
 make the firmware **hang or OOM while parsing**. This is a hard correctness requirement,
 not a nicety. The design enforces it two ways:
 
-1. **The root feed (`/opds`) is navigation-only.** It lists *no books* — only a few links
+1. **The root feed (`/opds`) is navigation-only.** It lists *no books*, only a few links
    to bounded subsections (Recently Added, All Books, Search). So the entry point is tiny
    regardless of library size.
 2. **Every acquisition feed is capped at `PageSize` (currently 30) entries**, with
    `<link rel="next">` / `<link rel="previous">` so the device pulls one bounded page at a
    time. `/opds/all`, `/opds/new`, and search results all funnel through a single
-   `acquisitionPage` chokepoint in `internal/opds` that enforces the cap — there is no code
+   `acquisitionPage` chokepoint in `internal/opds` that enforces the cap; there is no code
    path that emits an uncapped book list. The cap fetches `PageSize+1` rows to detect
    whether a next page exists, then trims.
 
 `PageSize` is intentionally conservative; tune it **only** after testing on the real
-device. Do not remove the cap as an "optimization" — it is the contract with the hardware.
+device. Do not remove the cap as an "optimization"; it is the contract with the hardware.
 
 **Verified (2026-06-15):** seeded 35 books, `/opds/all` returned exactly 30 entries with a
 `next` link to `?page=1`; `?page=1` returned the remaining 5 with a `previous` link and no
@@ -366,7 +366,7 @@ nothing meaningful.
 ### 6.2 Running under Podman (the deployment target)
 
 The host runs **rootless Podman**, not Docker. The compose file is Docker-compatible, but
-three Podman realities are designed in. They are not cosmetic — (1) is load-bearing for
+three Podman realities are designed in. They are not cosmetic; (1) is load-bearing for
 the import pipeline.
 
 1. **Rootless UID mapping → `userns_mode: keep-id` (the one that bites).** Rootless Podman
@@ -431,7 +431,7 @@ Decisions settled during implementation:
 
 1. **Sidecar boundary (§6.1):** always-on worker (option a). Python stays fully
    quarantined, no Docker socket, clean job contract.
-2. **`.acsm` entry point:** both supported — drop a file into `import/`, or upload
+2. **`.acsm` entry point:** both supported, via dropping a file into `import/`, or upload
    via the web UI; both converge on the same pipeline.
 3. **Adobe accounts:** single account. A multi-account legacy collection would need
    one `.der` per account in the pipeline; out of scope for v1.

@@ -67,7 +67,7 @@ func TestUploadAcceptsEpub(t *testing.T) {
 	entries, _ := os.ReadDir(imp)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".upload-") {
-			t.Errorf("leftover temp file %q — upload not atomic", e.Name())
+			t.Errorf("leftover temp file %q (upload not atomic)", e.Name())
 		}
 	}
 }

@@ -1,7 +1,7 @@
 // Package opds emits an OPDS 1.2 (Atom) catalog for the Xteink X4 / Crosspoint
 // OPDS client.
 //
-// HARD REQUIREMENT — PAGING: acquisition feeds are ALWAYS paged at PageSize.
+// HARD REQUIREMENT, PAGING: acquisition feeds are ALWAYS paged at PageSize.
 // The X4 runs on an ESP32C3 with very little RAM; handing it one unbounded
 // acquisition feed (every book in the library in a single XML document) can
 // make the firmware hang or OOM while parsing. So:
@@ -104,7 +104,7 @@ type content struct {
 
 // --- Handlers -------------------------------------------------------------
 
-// root: navigation feed only. No book entries here — just bounded entry points.
+// root: navigation feed only. No book entries here, just bounded entry points.
 func (h *Handler) root(w http.ResponseWriter, r *http.Request) {
 	f := feed{
 		XMLNS:   nsAtom,
@@ -141,7 +141,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 
 // acquisitionPage renders ONE bounded page of an acquisition feed and attaches
 // next/prev links. This is the single chokepoint that enforces paging for the
-// device — every book-listing feed funnels through here.
+// device; every book-listing feed funnels through here.
 func (h *Handler) acquisitionPage(w http.ResponseWriter, r *http.Request, slug, title string, base catalog.ListOptions) {
 	page := pageParam(r)
 	base.Limit = PageSize + 1 // fetch one extra to detect a next page

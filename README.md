@@ -8,15 +8,15 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale.
 
 ## Architecture (two containers)
 
-- **`library`** — Go service (single static binary). Catalog (SQLite), browser
+- **`library`**: Go service (single static binary). Catalog (SQLite), browser
   reader (epub.js), OPDS 1.2 feed, import watcher (the `ingest` package), upload
   endpoint. Never imports Python.
-- **`drm-sidecar`** — quarantined Python worker. Runs `acsm-calibre-plugin`
+- **`drm-sidecar`**: quarantined Python worker. Runs `acsm-calibre-plugin`
   (fulfillment) + DeDRM's `ineptepub` (decryption). Touches `/secrets` read-only.
 
 The X4 points its OPDS client at `http://<host>:8080/opds` and browses/downloads
 over WiFi. **OPDS feeds are always paged** (30/page) so the device never receives
-an unbounded feed it could choke on — see docs/DESIGN.md §5.4.1.
+an unbounded feed it could choke on (see docs/DESIGN.md §5.4.1).
 
 ## Layout
 
@@ -102,7 +102,7 @@ The Podman machine VM's clock drifts behind real time when the Mac sleeps. Fedor
 CoreOS ships chrony with `makestep 1.0 3` (step only the first 3 updates), so after
 a large sleep-induced jump it refuses to correct and the container runs minutes
 behind. Adobe then rejects fulfillment with **`E_ADEPT_REQUEST_EXPIRED`** (the
-signed request looks stale — it is *not* a login or credential problem).
+signed request looks stale; it is *not* a login or credential problem).
 
 `make up` runs `check-clock` and warns if the VM is skewed. To fix it:
 
@@ -117,7 +117,7 @@ rm`, so re-run it after recreating the machine).
 
 Three ways in; all converge on the same pipeline and catalog:
 
-- **Upload via the web UI** — the Import control on the library page accepts
+- **Upload via the web UI**: the Import control on the library page accepts
   `.acsm` or `.epub`. The file is staged atomically into `data/import/`.
 - **Drop a file** into `data/import/` directly.
 - Either way, the watcher (fsnotify + a 5s polling fallback, since inotify events
@@ -132,7 +132,7 @@ Three ways in; all converge on the same pipeline and catalog:
 The clean epub is verified as parseable, named from its title (e.g.
 `Book Title.epub`), and indexed. Originals from the DRM path archive to
 `import/done/`; failures go to `import/failed/` with a `.log`. The sidecar scratch
-in `import/work/` is wiped after each job. **`.acsm` files are time-sensitive** —
+in `import/work/` is wiped after each job. **`.acsm` files are time-sensitive:**
 library loans carry an `<expiration>`; fulfill before then.
 
 ### Removing books
@@ -149,44 +149,44 @@ make test            # go test ./...
 go test -race ./internal/ingest/ ./internal/catalog/   # concurrency-sensitive paths
 ```
 
-The suite is hermetic — it builds synthetic EPUBs (real zips with OPF) and temp
+The suite is hermetic: it builds synthetic EPUBs (real zips with OPF) and temp
 SQLite DBs in-test, so it needs no fixtures, network, or running sidecar. Coverage
 focuses on the logic that has bitten us or that protects the device/data:
 
-- **catalog** — scan/index idempotency, **prune** of deleted files (incl. cascade
+- **catalog**: scan/index idempotency, **prune** of deleted files (incl. cascade
   of join rows), author>title sort ordering, FTS search.
-- **opds** — the X4 paging invariant: feeds capped at `PageSize`, correct
+- **opds**: the X4 paging invariant: feeds capped at `PageSize`, correct
   next/prev boundaries, root-is-navigation-only.
-- **epub** — metadata parse, ADEPT-DRM detection (incl. *not* flagging IDPF font
+- **epub**: metadata parse, ADEPT-DRM detection (incl. *not* flagging IDPF font
   obfuscation), identifier/scheme guessing.
-- **drm** — sidecar client against a mock server: success, non-epub rejection,
+- **drm**: sidecar client against a mock server: success, non-epub rejection,
   error propagation, unreachable sidecar.
-- **web** — upload handler: extension rejection, atomic staging, form redirect.
-- **ingest / fileutil** — `uniquePath`, `importable`, the Create+Write dedupe,
+- **web**: upload handler: extension rejection, atomic staging, form redirect.
+- **ingest / fileutil**: `uniquePath`, `importable`, the Create+Write dedupe,
   cross-device move, filename sanitizing.
 
 ## Status
 
 Working and verified end-to-end on rootless Podman via the compose stack:
 
-- **Catalog / reader / OPDS** — EPUB metadata parse, scan/index, OPDS nav + paged
+- **Catalog / reader / OPDS**: EPUB metadata parse, scan/index, OPDS nav + paged
   acquisition feeds (next/prev boundaries verified), cover/file/search endpoints.
-- **DRM import** — a real OverDrive/Libby `.acsm` fulfilled against Adobe and
+- **DRM import**: a real OverDrive/Libby `.acsm` fulfilled against Adobe and
   decrypted (ADEPT stripped, content confirmed readable), then indexed.
-- **Direct import** — a DRM-free epub imports without touching the sidecar.
-- **Web upload** — `.acsm`/`.epub` upload routes through the same pipeline.
+- **Direct import**: a DRM-free epub imports without touching the sidecar.
+- **Web upload**: `.acsm`/`.epub` upload routes through the same pipeline.
 - **The two-container stack** builds and runs via `make up`; the Go service reaches
   the sidecar by service name over `libnet`.
 - **Library view** sorts by author, then title; "Recently Added" (OPDS) stays
   newest-first.
-- **Test suite** — hermetic Go tests across catalog, opds, epub, drm, web, ingest;
+- **Test suite**: hermetic Go tests across catalog, opds, epub, drm, web, ingest;
   green under `-race`.
 
-- **Browser reader** — `epub.js` + `jszip` are vendored into
+- **Browser reader**: `epub.js` + `jszip` are vendored into
   `internal/web/assets/` and embedded in the binary; the reader page renders books
   and persists reading position.
 
 Not yet done:
 
-- **Not yet tested on the actual X4** — the OPDS feed is spec-correct and paged,
+- **Not yet tested on the actual X4**: the OPDS feed is spec-correct and paged,
   but Crosspoint's parser hasn't consumed it from real hardware.

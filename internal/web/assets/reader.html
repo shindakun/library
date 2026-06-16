@@ -47,7 +47,7 @@
   const bookSlug = "{{.Book.Slug}}";
 
   // IMPORTANT: our file URL is /book/{slug}/file with NO ".epub" extension, and
-  // epub.js's determineType() sniffs the URL extension — with none, it wrongly
+  // epub.js's determineType() sniffs the URL extension; with none, it wrongly
   // treats the book as an exploded directory and renders nothing. So we fetch
   // the bytes ourselves and hand epub.js an ArrayBuffer, which it always opens
   // as a binary archive. (Robust regardless of URL shape or Content-Type.)

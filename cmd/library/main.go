@@ -85,7 +85,7 @@ func main() {
 		hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		if err := drmClient.Health(hctx); err != nil {
-			log.Printf("drm sidecar not ready (%v) — imports will fail until it is", err)
+			log.Printf("drm sidecar not ready (%v); imports will fail until it is", err)
 		} else {
 			log.Printf("drm sidecar healthy at %s", *sidecarURL)
 		}
