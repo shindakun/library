@@ -1,0 +1,319 @@
+// Package ingest watches the import directory and runs the DRM pipeline on new
+// files (fulfill .acsm -> decrypt ADEPT -> index), driving the sidecar via the
+// drm client. It is independent of the HTTP layer: the only seam with web is
+// that the upload handler writes a file into the watched import dir.
+package ingest
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/steve/library/internal/catalog"
+	"github.com/steve/library/internal/drm"
+	"github.com/steve/library/internal/epub"
+	"github.com/steve/library/internal/fileutil"
+)
+
+// Importer watches the import directory and runs the DRM pipeline on new files,
+// then hands the clean EPUB to the catalog. It is the only thing that drives
+// the sidecar.
+//
+// Layout under importDir:
+//
+//	import/        <- drop *.acsm or *.epub here (watched)
+//	import/work/   <- sidecar scratch: fulfilled + clean epubs (NOT watched)
+//	import/done/   <- originals move here on success
+//	import/failed/ <- originals move here on failure (with a .log sibling)
+type Importer struct {
+	Cat       *catalog.Catalog
+	DRM       *drm.Client
+	ImportDir string // host path watched for new files
+	LibraryDir  string // where clean epubs land
+	// SidecarPath maps a host import path to the path the sidecar sees for the
+	// same file (shared volume mounted at a possibly-different path). For the
+	// common case where both mount the same volume at the same path, set it to
+	// the identity function.
+	SidecarPath func(hostPath string) string
+
+	mu         sync.Mutex
+	inFlight   map[string]bool // paths currently being processed (dedupe Create+Write)
+	pipelineMu sync.Mutex      // serializes imports so work-dir cleanup is unambiguous
+}
+
+// cleanWorkDir empties the sidecar scratch dir. Safe because imports are
+// serialized by im.pipelineMu (see handle): only one job uses work/ at a time.
+func (im *Importer) cleanWorkDir() {
+	entries, err := os.ReadDir(im.workDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		os.RemoveAll(filepath.Join(im.workDir(), e.Name()))
+	}
+}
+
+// claim returns false if path is already being processed, otherwise marks it
+// in-flight. Create and Write events both fire for a single dropped file; this
+// keeps the pipeline from running twice on it.
+func (im *Importer) claim(path string) bool {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	if im.inFlight == nil {
+		im.inFlight = map[string]bool{}
+	}
+	if im.inFlight[path] {
+		return false
+	}
+	im.inFlight[path] = true
+	return true
+}
+
+func (im *Importer) release(path string) {
+	im.mu.Lock()
+	delete(im.inFlight, path)
+	im.mu.Unlock()
+}
+
+// workDir is the sidecar scratch subdir. Intermediates (the fulfilled encrypted
+// epub) and the clean output land here, OUTSIDE the watched set, so the watcher
+// never re-triggers on its own pipeline's byproducts.
+func (im *Importer) workDir() string { return filepath.Join(im.ImportDir, "work") }
+
+// Run blocks watching ImportDir until ctx is cancelled. It also processes any
+// files already present at startup.
+func (im *Importer) Run(ctx context.Context) error {
+	for _, sub := range []string{"work", "done", "failed"} {
+		os.MkdirAll(filepath.Join(im.ImportDir, sub), 0o755)
+	}
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	if err := w.Add(im.ImportDir); err != nil {
+		return err
+	}
+
+	// Sweep anything already present at startup.
+	im.sweep(ctx)
+
+	// Periodic sweep as a fallback. fsnotify/inotify events do NOT cross some
+	// bind-mount boundaries (notably macOS -> Podman/Docker VM via virtiofs/9p),
+	// so on those hosts the event path below never fires. Polling makes the
+	// importer work everywhere; the dedupe in claim() keeps it from racing the
+	// event path on hosts where both deliver.
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			im.sweep(ctx)
+		case ev, ok := <-w.Events:
+			if !ok {
+				return nil
+			}
+			if ev.Op&(fsnotify.Create|fsnotify.Write) != 0 && importable(ev.Name) {
+				path := ev.Name
+				// Debounce: let the writer finish before we touch it.
+				go func() {
+					time.Sleep(750 * time.Millisecond)
+					im.handle(ctx, path)
+				}()
+			}
+		case err, ok := <-w.Errors:
+			if !ok {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "watcher error: %v\n", err)
+		}
+	}
+}
+
+// sweep processes every importable file currently sitting at the top level of
+// the import dir. Used both at startup and as the periodic polling fallback.
+func (im *Importer) sweep(ctx context.Context) {
+	entries, err := os.ReadDir(im.ImportDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !importable(e.Name()) {
+			continue
+		}
+		// Skip files still being written: if mtime is very recent, let the next
+		// sweep catch it once the writer has settled.
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) < time.Second {
+			continue
+		}
+		go im.handle(ctx, filepath.Join(im.ImportDir, e.Name()))
+	}
+}
+
+func (im *Importer) handle(ctx context.Context, hostPath string) {
+	if !im.claim(hostPath) {
+		return // already being processed (Create+Write both fired)
+	}
+	defer im.release(hostPath)
+	if _, err := os.Stat(hostPath); err != nil {
+		return // already moved
+	}
+	// Serialize imports: the sidecar is single-tenant and the work dir is shared
+	// scratch, so one job at a time keeps cleanup unambiguous.
+	im.pipelineMu.Lock()
+	defer im.pipelineMu.Unlock()
+	// Always clear the sidecar scratch when this job ends, so the encrypted
+	// intermediate (and any clean file left behind on a mid-pipeline error)
+	// never accumulates. The work dir is pure transient scratch.
+	defer im.cleanWorkDir()
+	fmt.Printf("import: processing %s\n", filepath.Base(hostPath))
+
+	cleanHostPath, err := im.pipeline(ctx, hostPath)
+	if err != nil {
+		im.fail(hostPath, err)
+		return
+	}
+
+	// Verify it's a real, parseable epub BEFORE committing it to the library:
+	// metadata read doubles as a "is this actually a valid book" check, and the
+	// title gives us a clean library filename (no ".clean" pipeline artifact).
+	meta, err := epub.Read(cleanHostPath)
+	if err != nil {
+		im.fail(hostPath, fmt.Errorf("verify clean epub: %w", err))
+		return
+	}
+	// Organize on disk as Author/Title.epub.
+	dest := filepath.Join(im.LibraryDir, fileutil.LibraryRelPath(meta.Authors, meta.Title))
+	dest = uniquePath(dest)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		im.fail(hostPath, fmt.Errorf("create author dir: %w", err))
+		return
+	}
+	if err := moveFile(cleanHostPath, dest); err != nil {
+		im.fail(hostPath, fmt.Errorf("move clean epub: %w", err))
+		return
+	}
+	if _, err := im.Cat.Index(ctx, dest, sourceFor(hostPath)); err != nil {
+		im.fail(hostPath, fmt.Errorf("index: %w", err))
+		return
+	}
+
+	// Disposition of the dropped original. In the DRM path the clean epub is a
+	// separate file, so the original (.acsm or encrypted .epub) is archived to
+	// done/. In the direct-import path the original WAS the clean file and has
+	// already been moved into the library, so there's nothing left to archive.
+	if cleanHostPath != hostPath {
+		moveFile(hostPath, filepath.Join(im.ImportDir, "done", filepath.Base(hostPath)))
+	}
+	fmt.Printf("import: done %s\n", filepath.Base(hostPath))
+}
+
+// pipeline turns a dropped file into a clean, DRM-free epub and returns its
+// HOST path. Three cases:
+//
+//	.acsm            -> fulfill (Adobe) -> ADEPT epub -> decrypt -> clean epub
+//	.epub (ADEPT)    -> decrypt -> clean epub
+//	.epub (no DRM)   -> used as-is (direct import; the sidecar is never touched)
+//
+// Sidecar outputs land in the shared work dir, so we resolve the sidecar's
+// returned path to the host view by basename. The no-DRM case returns the
+// original import path unchanged.
+func (im *Importer) pipeline(ctx context.Context, hostPath string) (string, error) {
+	isACSM := strings.EqualFold(filepath.Ext(hostPath), ".acsm")
+
+	// Fast path: a plain DRM-free epub needs no fulfillment or decryption.
+	if !isACSM {
+		encrypted, err := epub.IsADEPTEncrypted(hostPath)
+		if err != nil {
+			return "", fmt.Errorf("inspect epub: %w", err)
+		}
+		if !encrypted {
+			fmt.Printf("import: %s has no Adobe DRM, importing directly\n", filepath.Base(hostPath))
+			return hostPath, nil
+		}
+	}
+
+	// DRM path: fulfill (.acsm only) then decrypt via the sidecar.
+	in := im.SidecarPath(hostPath)
+	if isACSM {
+		out, err := im.DRM.Fulfill(ctx, in)
+		if err != nil {
+			return "", fmt.Errorf("fulfill: %w", err)
+		}
+		in = out
+	}
+	cleanSidecarPath, err := im.DRM.Decrypt(ctx, in)
+	if err != nil {
+		return "", fmt.Errorf("decrypt: %w", err)
+	}
+	// Sidecar wrote into the shared work dir; map back to the host view.
+	return filepath.Join(im.workDir(), filepath.Base(cleanSidecarPath)), nil
+}
+
+func (im *Importer) fail(hostPath string, cause error) {
+	fmt.Fprintf(os.Stderr, "import: FAILED %s: %v\n", filepath.Base(hostPath), cause)
+	dst := filepath.Join(im.ImportDir, "failed", filepath.Base(hostPath))
+	moveFile(hostPath, dst)
+	os.WriteFile(dst+".log", []byte(cause.Error()+"\n"), 0o644)
+}
+
+// uniquePath returns p, or p with a " (2)", " (3)", … suffix before the
+// extension if a file already exists, so two books with the same title don't
+// clobber each other in the library.
+func uniquePath(p string) string {
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return p
+	}
+	ext := filepath.Ext(p)
+	base := strings.TrimSuffix(p, ext)
+	for i := 2; ; i++ {
+		cand := fmt.Sprintf("%s (%d)%s", base, i, ext)
+		if _, err := os.Stat(cand); os.IsNotExist(err) {
+			return cand
+		}
+	}
+}
+
+func importable(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext == ".acsm" || ext == ".epub"
+}
+
+func sourceFor(p string) string {
+	if strings.EqualFold(filepath.Ext(p), ".acsm") {
+		return "acsm"
+	}
+	return "epub-import"
+}
+
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	// Cross-device fallback: copy then remove.
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := out.ReadFrom(in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Remove(src)
+}

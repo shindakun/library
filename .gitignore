@@ -1,0 +1,29 @@
+# Secrets — Adobe activation + decryption keys. NEVER commit.
+/secrets/*
+!/secrets/.gitkeep
+
+# Loan/purchase tokens and any books — local only.
+*.acsm
+*.epub
+*.pdf
+*.der
+
+# Library data (the library dir, db, import staging)
+/data/library/*
+!/data/library/.gitkeep
+/data/import/**
+/data/catalog.db*
+
+# Build artifacts
+/library
+/bin/
+*.test
+
+# This project has NO Node deps (frontend JS is vendored). Backstop against any
+# stray tooling dropping node_modules into the repo.
+/node_modules/
+package.json
+package-lock.json
+
+# OS / editor
+.DS_Store

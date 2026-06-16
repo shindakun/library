@@ -1,0 +1,57 @@
+# Works with `podman compose up` (Podman's built-in compose) or `docker compose`.
+#
+# Podman-specific notes (see README "Running under Podman" and docs/DESIGN.md §6.2):
+#  - userns_mode: keep-id maps your host UID into both containers so files written
+#    to the shared ./data volume by one container are owned/readable by the other
+#    AND editable by you on the host. Without it, rootless Podman remaps the
+#    container user to a high subordinate UID and the import pipeline can't hand
+#    files between containers (or you can't read them on the host).
+#  - The explicit `libnet` network guarantees aardvark-dns service-name resolution
+#    (drm-sidecar:7000), sidestepping rootless default-network DNS regressions.
+#  - Bind mounts carry :z / :Z for SELinux hosts (Fedora/RHEL). :Z = private relabel
+#    (secrets), :z = shared relabel (data volume used by both containers). On
+#    non-SELinux hosts these suffixes are harmless no-ops.
+# NOTE: this file lives in docker/, so all relative paths are one level up
+# (../data, ../secrets) and the Go build context is the repo root (..).
+# Drive it from the repo root via the Makefile (make up / make down / etc.).
+services:
+  library:
+    build:
+      context: ..                 # repo root: the Go module is built from here
+      dockerfile: docker/Dockerfile
+    userns_mode: keep-id
+    ports:
+      - "8080:8080"
+    environment:
+      LIBRARY_DATA: /data
+      # The X4 reaches this server over the LAN. Set to the host's LAN IP so the
+      # OPDS feed emits links the device can actually fetch. Override per-host.
+      LIBRARY_BASE_URL: ${LIBRARY_BASE_URL:-http://localhost:8080}
+      DRM_SIDECAR_URL: http://drm-sidecar:7000
+    volumes:
+      - ../data:/data:z         # books, catalog.db, import/ (watched)
+    networks:
+      - libnet
+    depends_on:
+      - drm-sidecar
+    restart: unless-stopped
+
+  drm-sidecar:
+    build: ./sidecar
+    userns_mode: keep-id
+    # Not published to the host — only reachable on the internal compose network.
+    environment:
+      SECRETS_DIR: /secrets
+      WORK_DIR: /data/import/work # sidecar scratch, OUTSIDE the watched import/
+                                  # root so its intermediates don't re-trigger the
+                                  # watcher (see internal/web/watcher.go workDir())
+    volumes:
+      - ../secrets:/secrets:ro,Z # activation + .der key, READ ONLY, private relabel
+      - ../data:/data:z          # same data volume; sidecar reads import/, writes results there
+    networks:
+      - libnet
+    restart: unless-stopped
+
+networks:
+  libnet:
+    driver: bridge
