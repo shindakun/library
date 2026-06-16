@@ -19,6 +19,10 @@
 /bin/
 *.test
 
+# Stray downloads / installers that shouldn't be committed
+*.dmg
+*.pkg
+
 # This project has NO Node deps (frontend JS is vendored). Backstop against any
 # stray tooling dropping node_modules into the repo.
 /node_modules/

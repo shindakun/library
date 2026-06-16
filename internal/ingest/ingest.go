@@ -190,6 +190,18 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 		im.fail(hostPath, fmt.Errorf("verify clean epub: %w", err))
 		return
 	}
+
+	// Skip byte-identical duplicates: if a book with this exact content hash is
+	// already in the library, importing it again would make a second copy on disk
+	// and a second catalog row sharing the same content-hash slug (ambiguous URL).
+	if hash, herr := catalog.FileHash(cleanHostPath); herr == nil {
+		if dup, _ := im.Cat.HasHash(ctx, hash); dup {
+			fmt.Printf("import: %s is already in the library (duplicate content), skipping\n", filepath.Base(hostPath))
+			moveFile(hostPath, filepath.Join(im.ImportDir, "done", filepath.Base(hostPath)))
+			return
+		}
+	}
+
 	// Organize on disk as Author/Title.epub.
 	dest := filepath.Join(im.LibraryDir, fileutil.LibraryRelPath(meta.Authors, meta.Title))
 	dest = uniquePath(dest)

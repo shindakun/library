@@ -442,6 +442,25 @@ func (c *Catalog) GetBySlug(ctx context.Context, slug string) (*Book, error) {
 	return c.Get(ctx, id)
 }
 
+// HasHash reports whether a book with the exact content hash is already in the
+// catalog. Used to skip importing a byte-identical duplicate (which would
+// otherwise create a second row sharing the same content-hash slug).
+func (c *Catalog) HasHash(ctx context.Context, hash string) (bool, error) {
+	if hash == "" {
+		return false, nil
+	}
+	var n int
+	err := c.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM books WHERE file_hash = ?`, hash).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// FileHash returns the sha256 of a file as a hex string (exported helper so the
+// ingest layer can check for duplicates before committing a book).
+func FileHash(path string) (string, error) { return hashFile(path) }
+
 func (c *Catalog) loadBooks(ctx context.Context, ids []int64) ([]*Book, error) {
 	byID := map[int64]*Book{}
 	order := make([]int64, 0, len(ids))

@@ -249,6 +249,28 @@ func TestSlugIsStableAcrossRebuild(t *testing.T) {
 	_ = id1 // the integer id is allowed to change; the slug is not
 }
 
+func TestHasHash(t *testing.T) {
+	c, library := newTestCatalog(t)
+	p := makeEPUB(t, library, "a.epub", "Alpha", "Author")
+	if _, err := c.Index(context.Background(), p, "scan"); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := FileHash(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has, err := c.HasHash(context.Background(), hash)
+	if err != nil || !has {
+		t.Errorf("HasHash(indexed file) = %v (err %v), want true", has, err)
+	}
+	if has, _ := c.HasHash(context.Background(), "0000000000000000"); has {
+		t.Error("HasHash(unknown) = true, want false")
+	}
+	if has, _ := c.HasHash(context.Background(), ""); has {
+		t.Error("HasHash(empty) = true, want false")
+	}
+}
+
 func TestGetBySlugMissing(t *testing.T) {
 	c, _ := newTestCatalog(t)
 	_, err := c.GetBySlug(context.Background(), "deadbeefdeadbeef")
