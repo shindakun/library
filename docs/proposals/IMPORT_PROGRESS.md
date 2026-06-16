@@ -109,9 +109,14 @@ GET  /imports                 the import page (server-rendered shell)
 GET  /api/imports             JSON snapshot of current jobs (initial load; also a
                               poll fallback if SSE drops)
 GET  /api/imports/stream      SSE: text/event-stream, one event per job update
-POST /api/upload              (existing) now returns the job id so the page can
-                              highlight the just-uploaded job
+POST /api/upload              (existing) returns {"queued": <filename>}
 ```
+
+Note: `POST /api/upload` cannot return a job *id*: the job is created later by
+the watcher when it picks the file up (async), not by the upload handler. The
+file-to-job correlation key is therefore the **filename** (which upload already
+returns). The UI keys job rows by name to highlight a just-uploaded file once its
+job appears via SSE. (Revised from "return the job id".)
 
 ### SSE specifics
 
@@ -149,8 +154,13 @@ Move import off the library grid into its own page, cleaner and purpose-built:
    "queued". `jobs_test.go` covers lifecycle, unknown-id no-ops, subscribe/
    broadcast, copy-isolation, unsubscribe, slow-subscriber-no-block, and all three
    retention paths; race-clean.
-2. **API**: `GET /api/imports` (snapshot) + `GET /api/imports/stream` (SSE).
-   Test the snapshot endpoint; SSE is verified structurally + in the browser.
+2. **API** (DONE): `GET /api/imports` (snapshot JSON) + `GET /api/imports/stream`
+   (SSE: snapshot burst on connect, then one `data:` event per job update, 25s
+   keepalive comments, stops on client disconnect). `Server` holds a
+   `*ingest.Jobs` (passed from `main` via `importer.JobRegistry()`, created before
+   `web.New`). Tested with a real httptest listener: snapshot endpoint, empty
+   case, and the live SSE stream (snapshot + post-connect update + disconnect).
+   Race-clean.
 3. **Import page**: `imports.html` + `imports.js`, the relocated upload control,
    the live list + progress bars. Browser-verified by the user (JS is checked
    statically, per the project's frontend-verification convention).

@@ -87,7 +87,21 @@ func main() {
 	// setup form. Created before the web server so it can be handed in.
 	drmClient := drm.New(*sidecarURL)
 
-	websrv, err := web.New(cat, importDir, drmClient)
+	// Importer is created before the web server so its job registry can back the
+	// /imports page + SSE stream.
+	importer := &ingest.Importer{
+		Cat:        cat,
+		DRM:        drmClient,
+		ImportDir:  importDir,
+		LibraryDir: libraryDir,
+		// The sidecar sees the shared volume at SIDECAR_DATA (default /data); the
+		// Go service sees it at *dataDir. In compose both are /data, so this is a
+		// no-op. When the Go service runs on the HOST (dev) against a containerized
+		// worker, the host path must be rewritten to the container path.
+		SidecarPath: pathMapper(*dataDir, env("SIDECAR_DATA", "/data")),
+	}
+
+	websrv, err := web.New(cat, importDir, drmClient, importer.JobRegistry())
 	if err != nil {
 		log.Fatalf("web: %v", err)
 	}
@@ -106,17 +120,6 @@ func main() {
 			log.Printf("drm sidecar healthy at %s", *sidecarURL)
 		}
 	}()
-	importer := &ingest.Importer{
-		Cat:        cat,
-		DRM:        drmClient,
-		ImportDir:  importDir,
-		LibraryDir: libraryDir,
-		// The sidecar sees the shared volume at SIDECAR_DATA (default /data); the
-		// Go service sees it at *dataDir. In compose both are /data, so this is a
-		// no-op. When the Go service runs on the HOST (dev) against a containerized
-		// worker, the host path must be rewritten to the container path.
-		SidecarPath: pathMapper(*dataDir, env("SIDECAR_DATA", "/data")),
-	}
 	go func() {
 		if err := importer.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("importer stopped: %v", err)

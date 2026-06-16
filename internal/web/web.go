@@ -17,11 +17,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/drm"
 	"github.com/steve/library/internal/epub"
 	"github.com/steve/library/internal/fileutil"
+	"github.com/steve/library/internal/ingest"
 )
 
 //go:embed assets/*
@@ -36,16 +38,19 @@ type Server struct {
 	// DRM drives the sidecar; used for the first-run setup form (check whether
 	// Adobe is configured, and run setup). May be nil (setup form disabled).
 	DRM *drm.Client
-	tpl *template.Template
+	// Jobs is the import-job registry, read for the /imports page + SSE stream.
+	// May be nil (the imports endpoints then report an empty list).
+	Jobs *ingest.Jobs
+	tpl  *template.Template
 }
 
 // New parses templates and returns a Server.
-func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client) (*Server, error) {
+func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client, jobs *ingest.Jobs) (*Server, error) {
 	tpl, err := template.ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
-	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, tpl: tpl}, nil
+	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, Jobs: jobs, tpl: tpl}, nil
 }
 
 // Register wires the browser + API routes onto mux.
@@ -61,6 +66,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/scan", s.apiScan)
 	mux.HandleFunc("POST /api/upload", s.apiUpload)
 	mux.HandleFunc("POST /api/setup", s.apiSetup)
+	mux.HandleFunc("GET /api/imports", s.apiImports)
+	mux.HandleFunc("GET /api/imports/stream", s.apiImportsStream)
 	// Static JS/CSS (epub.js lives here once vendored).
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(assets, "assets"))))
 }
@@ -270,6 +277,82 @@ func (s *Server) apiScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int{"indexed": n})
+}
+
+// apiImports returns a snapshot of current/recent import jobs. Used for the
+// initial page load and as a reconnect fallback for the SSE stream.
+func (s *Server) apiImports(w http.ResponseWriter, r *http.Request) {
+	if s.Jobs == nil {
+		writeJSON(w, []*ingest.Job{})
+		return
+	}
+	writeJSON(w, s.Jobs.Snapshot())
+}
+
+// apiImportsStream is a Server-Sent Events stream of import-job updates. It
+// sends the current snapshot first (so a late-joining client is immediately
+// correct), then one event per job change until the client disconnects.
+func (s *Server) apiImportsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok || s.Jobs == nil {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Disable proxy buffering so events flush through (no-op without such a proxy).
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Subscribe BEFORE snapshotting so no update is missed in the gap; a
+	// duplicate event for a job already in the snapshot is harmless (the client
+	// keys rows by job id and overwrites).
+	updates, unsub := s.Jobs.Subscribe()
+	defer unsub()
+
+	for _, job := range s.Jobs.Snapshot() {
+		if !writeSSE(w, job) {
+			return
+		}
+	}
+	flusher.Flush()
+
+	ctx := r.Context()
+	keepalive := time.NewTicker(25 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job, ok := <-updates:
+			if !ok {
+				return
+			}
+			if !writeSSE(w, job) {
+				return
+			}
+			flusher.Flush()
+		case <-keepalive.C:
+			// Comment line keeps idle connections (and proxies) alive.
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// writeSSE marshals a job as a single SSE "data:" event. Returns false if the
+// write failed (client gone), so the caller can stop.
+func writeSSE(w http.ResponseWriter, job *ingest.Job) bool {
+	b, err := json.Marshal(job)
+	if err != nil {
+		return true // skip a bad job, keep the stream alive
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+		return false
+	}
+	return true
 }
 
 // --- helpers --------------------------------------------------------------

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/steve/library/internal/catalog"
+	"github.com/steve/library/internal/ingest"
 )
 
 func newTestServer(t *testing.T) (*Server, string) {
@@ -23,7 +24,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cat.Close() })
-	s, err := New(cat, imp, nil)
+	s, err := New(cat, imp, nil, ingest.NewJobs())
 	if err != nil {
 		t.Fatal(err)
 	}

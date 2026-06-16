@@ -59,6 +59,11 @@ type Jobs struct {
 	now    func() time.Time // injectable for tests
 }
 
+// NewJobs returns an empty import-job registry. The Importer creates its own via
+// JobRegistry(); this is exported so the web layer (and its tests) can construct
+// one directly.
+func NewJobs() *Jobs { return newJobs() }
+
 func newJobs() *Jobs {
 	return &Jobs{
 		jobs: map[string]*Job{},
