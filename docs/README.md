@@ -14,3 +14,5 @@ if/when the feature is wanted; nothing here is wired into the running system.
   import Kobo books (Obok-based).
 - [proposals/METADATA_EDITING.md](proposals/METADATA_EDITING.md): in-browser
   metadata editing.
+- [proposals/COMIC_SUPPORT.md](proposals/COMIC_SUPPORT.md): CBZ/CBR comic
+  import, cataloging, and a browser comic viewer.
