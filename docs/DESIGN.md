@@ -4,15 +4,17 @@ A self-hosted ebook library. Stores EPUBs, serves a browser-based reader, expose
 OPDS catalog the Xteink X4 (Crosspoint firmware) browses over WiFi, and ingests
 Adobe-DRM books by fulfilling `.acsm` files and stripping the legacy ADEPT DRM on import.
 
-- **Status:** Implemented and verified end-to-end on rootless Podman. Pipeline
-  (fulfill → decrypt → catalog), browser reader, OPDS feed, web upload, and the
-  two-container compose stack all working. Not yet validated against real X4
-  hardware. See §9 (resolved decisions and future work) and this project's README.md.
+- **Status:** Implemented and verified end-to-end via the two-container compose
+  stack. Pipeline (fulfill, decrypt, catalog), browser reader, OPDS feed, web
+  upload, cover cache, first-run setup all working. Not yet validated against real
+  X4 hardware. See §9 (resolved decisions and future work) and README.md.
 - **Author:** steve
 - **Date:** 2026-06-15
 - **Stack:** Go service (single static binary) + a quarantined Python "DRM sidecar"
-  container. Rootless Podman on a home server/NAS on the LAN, driven by `docker
-  compose` (which talks to Podman's socket) via a root Makefile.
+  container, orchestrated by Docker Compose. **Deploy target:** a Proxmox host
+  (LXC + Docker), pulling images from GHCR; see docs/DEPLOY.md. **Development** is
+  on macOS under rootless Podman (driven by `docker compose` against Podman's
+  socket); §6.2 covers the Podman-on-Mac specifics.
 
 ---
 
@@ -245,25 +247,31 @@ CREATE TABLE read_state (book_id INT PRIMARY KEY, percent REAL, cfi TEXT, update
 
 ### 5.3 HTTP surface
 
+Public book URLs key on {slug} (a content-hash prefix), not the integer DB id,
+so a book's URL survives catalog rebuilds (§5.6).
+
 ```text
-GET  /                      catalog UI (grid, search, filter by author/series/tag)
-GET  /read/{id}             epub.js reader for a book
-GET  /api/books             JSON list (paged, ?q= search, ?author= ?series= ?tag=)
-GET  /api/books/{id}        JSON detail
-GET  /book/{id}/file        the raw EPUB (download / reader fetch)
-GET  /book/{id}/cover       cover thumbnail
-PUT  /api/books/{id}/read   update read position {percent, cfi}
-POST /api/scan              rescan /data/library for new/changed files
+GET  /                       catalog UI (grid + sortable table, search)
+GET  /read/{slug}            epub.js reader for a book
+GET  /book/{slug}/file       the raw EPUB (download / reader fetch)
+GET  /book/{slug}/cover      cover image (served from data/covers cache, §5.7)
+GET  /api/books              JSON list (?q= search, ?author=, ?series=)
+PUT  /api/books/{slug}/read  update read position {percent, cfi}
+POST /api/scan               rescan /data/library for new/changed files
+POST /api/upload             upload an .acsm / .epub into the import dir
+POST /api/setup              one-time Adobe authorization (first-run form, §5.8)
+GET  /static/...             embedded CSS/JS/vendor assets
 
 # --- OPDS (what the X4 consumes) ---
-GET  /opds                  root navigation feed (acquisition links to subsections)
-GET  /opds/new              recently added (acquisition feed)
-GET  /opds/authors          navigation feed → per-author acquisition feeds
-GET  /opds/series           navigation feed → per-series acquisition feeds
-GET  /opds/all              full acquisition feed (paginated, rel=next/prev)
-GET  /opds/search?q=        OpenSearch results as an acquisition feed
-GET  /opds/opensearch.xml   OpenSearch description doc
+GET  /opds                   root navigation feed (links to subsections)
+GET  /opds/new               recently added (acquisition feed)
+GET  /opds/all               full acquisition feed (paginated, rel=next/prev)
+GET  /opds/search?q=         search results as an acquisition feed
+GET  /opds/opensearch.xml    OpenSearch description doc
 ```
+
+Per-author and per-series OPDS navigation feeds are a possible future addition;
+v1 ships the root, new, all, and search feeds above.
 
 ### 5.4 OPDS specifics (the X4 contract)
 
@@ -273,7 +281,7 @@ This is the load-bearing interop point, so it gets called out explicitly:
   pagination, multiple servers, relative paths, and KOReader-compatible download filenames
   (per its docs).
 - Acquisition entries use `rel="http://opds-spec.org/acquisition"` with
-  `type="application/epub+zip"` pointing at `/book/{id}/file`.
+  `type="application/epub+zip"` pointing at `/book/{slug}/file`.
 - Cover/thumbnail links use `rel="http://opds-spec.org/image"` and `…/image/thumbnail`.
 - Search advertised via `rel="search" type="application/opensearchdescription+xml"`.
 - Download filenames set via `Content-Disposition` so Crosspoint names files sanely.
@@ -328,46 +336,72 @@ through the same indexer, and the import pipeline writes new books directly to t
 Listing order: the library view (web `/`, OPDS `/opds/all`) sorts by **author, then
 title**; the OPDS "Recently Added" feed sorts newest-first.
 
+### 5.6 Stable book identity (slug)
+
+Public URLs key on a **slug**: the first 16 hex chars of the book's content
+hash (`file_hash`). Unlike the integer DB id (an autoincrement rowid that changes
+when the catalog is rebuilt), the slug is deterministic, so `/read/<slug>` and
+`/book/<slug>/...` survive DB rebuilds, library moves, and re-imports. The
+integer id stays internal (joins); the slug is the external identity.
+
+### 5.7 Cover cache
+
+`GET /book/{slug}/cover` previously re-opened the epub zip and parsed its OPF on
+every request, and the grid loads many covers per page view. Covers are now
+extracted once during `Index` (so scan and import both populate it) to
+`data/covers/<slug>.<ext>` and served as a flat file. The handler falls back to
+live extraction on a cache miss and lazily populates it, so books indexed before
+the cache self-heal. The cache is purely derived: wiping `data/covers` just
+reverts to live extraction. This also unifies with a future cover override (an
+uploaded cover overwrites the same file).
+
+### 5.8 First-run setup
+
+The DRM pipeline needs a one-time Adobe authorization (activation + key) in
+`/secrets`. When the sidecar reports unconfigured, the web UI shows a setup form
+(`POST /api/setup`) instead of the catalog; submitting it has the sidecar run the
+upstream register + key-export non-interactively and write `/secrets`. The
+interactive CLI path (`setup.py`) remains as a fallback. See the deploy guide for
+both. The form is gated on "secrets empty" and refuses once configured.
+
 ---
 
 ## 6. Deployment
 
-```yaml
-# docker-compose.yml (sketch)
-services:
-  library:
-    build: ./library          # Go binary, scratch/distroless base
-    ports: ["8080:8080"]
-    volumes:
-      - ./data:/data           # books, catalog.db, import/
-    environment:
-      - LIBRARY_DATA=/data
-      - DRM_SIDECAR_IMAGE=library-drm-sidecar
-    # mounts the docker socket OR talks to sidecar via a tiny exec helper;
-    # see §6.1 for the "Go runs docker run" boundary.
-  # sidecar is NOT a long-running service; it's `docker run --rm`'d on demand.
-```
+The stack is two containers orchestrated by compose:
 
-### 6.1 How Go invokes the sidecar (the one design wrinkle)
+- **library** (Go): built from `docker/Dockerfile` (distroless, repo-root build
+  context), serves `:8080`, mounts `./data`.
+- **drm-sidecar** (Python): built from `docker/sidecar/Dockerfile`, mounts
+  `./secrets` and `./data`.
 
-A container shouldn't casually mount the Docker socket. Two clean options:
+Two compose files exist: `docker/docker-compose.yml` (the macOS Podman dev file,
+which builds locally; see §6.2) and `docker/docker-compose.prod.yml` (production,
+which pulls prebuilt GHCR images and drops the Podman-only bits). Production
+deployment, release flow, and first-run setup are in docs/DEPLOY.md.
 
-- **(a) Sidecar as a tiny always-on HTTP worker** on the internal compose network: Go POSTs
-  a job (`{op:"fulfill"|"decrypt", file}`), it shells the Python script and returns the
-  output path. No socket mount; clearest boundary. Slightly more than "run --rm" but
-  trivial (a 30-line Flask/`http.server` wrapper).
-- **(b) Bundle the Python tools into the same image** behind a subprocess call. Simplest to
-  run, but reintroduces Python into the "Go" container we wanted pure.
+### 6.1 How Go invokes the sidecar
 
-**Recommendation: (a).** Keeps Python fully quarantined, no socket, clean job contract. The
-sidecar is idle ~all the time (DRM import is occasional), so an always-on worker costs
-nothing meaningful.
+A container should not casually mount the Docker socket. The choice (and what
+shipped):
 
-### 6.2 Running under Podman (the deployment target)
+- **(a, CHOSEN) Sidecar as an always-on HTTP worker** on the internal compose
+  network: Go POSTs a job (`{op:"fulfill"|"decrypt", input}`) to the sidecar,
+  which runs the Python script and returns the output path. No socket mount;
+  clean job contract. The sidecar is a long-running service on `libnet`.
+- **(b) Bundle the Python tools into the Go image** behind a subprocess call.
+  Simplest to run, but reintroduces Python into the "Go" container we kept pure.
 
-The host runs **rootless Podman**, not Docker. The compose file is Docker-compatible, but
-three Podman realities are designed in. They are not cosmetic; (1) is load-bearing for
-the import pipeline.
+(a) keeps Python fully quarantined. The sidecar is idle most of the time (DRM
+import is occasional), so an always-on worker costs nothing meaningful. It also
+backs the web first-run setup (§5.8): the same worker exposes `/setup`.
+
+### 6.2 Running under Podman (the macOS dev environment)
+
+Development is on macOS under **rootless Podman** (production is any Docker host;
+see docs/DEPLOY.md). The compose file is Docker-compatible, but three Podman
+realities are designed into the dev compose. They are not cosmetic; (1) is
+load-bearing for the import pipeline.
 
 1. **Rootless UID mapping → `userns_mode: keep-id` (the one that bites).** Rootless Podman
    runs containers in a user namespace that remaps the container's user to a *high

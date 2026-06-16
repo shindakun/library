@@ -1,9 +1,13 @@
-# Deploying on Proxmox
+# Deploying
 
-The deploy target is a Proxmox host. macOS is for development only. The
-shippable artifact is two container images; anything that runs Docker can run
-the stack. This guide covers the recommended path: an **LXC container running
-Docker**, pulling prebuilt **multi-arch images from GHCR**.
+The shippable artifact is two container images, so **anything that runs Docker
+(or Docker-compatible compose) can run the stack**: a VM, a NAS, a bare Linux
+box, or a Proxmox LXC. macOS is for development only.
+
+This guide describes the general flow (GHCR images + the prod compose file), then
+adds notes for the author's setup, a **Proxmox LXC running Docker**. Nothing here
+is Proxmox-specific except the LXC section; on any other Docker host, skip it and
+run the same compose.
 
 ## 1. Build path: GHCR (CI builds, the host pulls)
 
@@ -15,14 +19,14 @@ nested under the repo:
 - `ghcr.io/shindakun/library/sidecar`
 
 Tags: `latest` and `main` track the default branch; `vX.Y.Z` tags are pinned
-releases. The Proxmox host never builds; it pulls.
+releases. The deploy host never builds; it pulls.
 
 If the GHCR packages are private, create a classic PAT with `read:packages` and
 `docker login ghcr.io` on the host once.
 
 ### Cutting a release
 
-Releases are tag-driven, from the repo (not the Proxmox host):
+Releases are tag-driven, from the repo (not the deploy host):
 
 ```sh
 make release VERSION=v0.1.0
@@ -30,9 +34,13 @@ make release VERSION=v0.1.0
 
 This runs the checks, tags `v0.1.0`, and pushes `main` + the tag. CI then builds
 the multi-arch images (stamped with the version) and creates the GitHub Release.
-The Proxmox host deploys a release by setting `TAG=v0.1.0` below.
+The deploy host runs a release by setting `TAG=v0.1.0` below.
 
-## 2. The Proxmox LXC
+## 2. The Proxmox LXC (skip on a non-Proxmox host)
+
+If you are deploying on a plain Docker host (VM, NAS, bare Linux), skip this
+section: you already have Docker. It applies only to running Docker inside a
+Proxmox LXC.
 
 Create a Debian (or Ubuntu) LXC. Docker-in-LXC needs nesting and keyctl:
 
@@ -48,8 +56,8 @@ the compose plugin.
 ## 3. Lay out persistent state
 
 The stack keeps everything under two host directories, mounted into the
-containers. Put them somewhere persistent on the LXC (or a bind-mounted Proxmox
-dataset):
+containers. Put them somewhere persistent on the host (on Proxmox, that can be a
+bind-mounted dataset):
 
 ```text
 /opt/library/
@@ -123,13 +131,12 @@ into `secrets/`. Re-run either method to re-authorize.
   (or `make prod-deploy`). State in `data/` / `secrets/` survives.
 - **Logs:** `docker compose -f docker-compose.prod.yml logs -f`.
 
-## 7. Notes specific to this deploy
+## 7. Notes
 
-- **Clock:** unlike the macOS Podman VM, a Linux LXC keeps real time, so the
-  ADEPT `E_ADEPT_REQUEST_EXPIRED` clock-skew issue does not occur here. No
-  `time-sync` step is needed.
+- **Clock:** a real Linux host (including an LXC) keeps real time, so the ADEPT
+  `E_ADEPT_REQUEST_EXPIRED` clock-skew issue (which only affects the macOS Podman
+  dev VM) does not occur in production. No `time-sync` step is needed.
 - **Arch:** the images are multi-arch, so the same compose works on an amd64 or
-  arm64 Proxmox host.
-- **Other runtimes:** nothing here is Proxmox-specific beyond the LXC nesting
-  note. Any Docker host (a VM, another NAS, a bare Linux box) runs the same prod
-  compose.
+  arm64 host.
+- **Portability:** only §2 is Proxmox-specific (the LXC nesting note). Any Docker
+  host (a VM, a NAS, a bare Linux box) runs the same prod compose unchanged.

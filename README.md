@@ -9,8 +9,8 @@ A self-hosted ebook library: browser reader + OPDS feed for the **Xteink X4
 files and strips legacy ADEPT DRM on the way in.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale, and
-[docs/DEPLOY.md](docs/DEPLOY.md) for deploying on Proxmox (LXC + Docker, GHCR
-images).
+[docs/DEPLOY.md](docs/DEPLOY.md) for deploying the compose stack on any Docker
+host (with notes for a Proxmox LXC).
 
 ## Architecture (two containers)
 
@@ -78,10 +78,11 @@ make run             # go run on the host; serves :8080
 
 DRM imports need the sidecar; use `make up` for the full stack.
 
-## Containers run on Podman (via `docker compose`)
+## Local development on Podman (macOS, via `docker compose`)
 
-The deployment target is **rootless Podman** on a home server/NAS. Important
-practical note about the tooling on macOS:
+The stack runs on any Docker host (the author's is a Proxmox LXC; see
+[docs/DEPLOY.md](docs/DEPLOY.md)). **Local development** runs the same compose
+stack under rootless Podman on macOS, which has a few practical wrinkles:
 
 - Use **`docker compose`**, not `podman compose`. On this setup `podman compose`
   delegates to Docker Desktop's compose plugin, which can't reach a daemon and
@@ -126,8 +127,9 @@ Three ways in; all converge on the same pipeline and catalog:
 - **Upload via the web UI**: the Import control on the library page accepts
   `.acsm` or `.epub`. The file is staged atomically into `data/import/`.
 - **Drop a file** into `data/import/` directly.
-- Either way, the watcher (fsnotify + a 5s polling fallback, since inotify events
-  don't cross the macOS→Podman-VM mount) runs the right path:
+- Either way, the watcher (fsnotify + a 5s polling fallback; the poll covers
+  hosts where inotify events do not cross the bind mount, e.g. the macOS Podman
+  VM) runs the right path:
 
 | Dropped/uploaded        | Pipeline                                            |
 |-------------------------|-----------------------------------------------------|
@@ -173,24 +175,33 @@ focuses on the logic that has bitten us or that protects the device/data:
 
 ## Status
 
-Working and verified end-to-end on rootless Podman via the compose stack:
+Working and verified end-to-end via the compose stack:
 
-- **Catalog / reader / OPDS**: EPUB metadata parse, scan/index, OPDS nav + paged
-  acquisition feeds (next/prev boundaries verified), cover/file/search endpoints.
+- **Catalog / reader / OPDS**: EPUB metadata parse, scan/index/prune, OPDS nav +
+  paged acquisition feeds (next/prev boundaries verified), cover/file/search.
 - **DRM import**: a real OverDrive/Libby `.acsm` fulfilled against Adobe and
   decrypted (ADEPT stripped, content confirmed readable), then indexed.
-- **Direct import**: a DRM-free epub imports without touching the sidecar.
+- **Direct import**: a DRM-free epub imports without touching the sidecar;
+  byte-identical duplicates are skipped.
 - **Web upload**: `.acsm`/`.epub` upload routes through the same pipeline.
-- **The two-container stack** builds and runs via `make up`; the Go service reaches
-  the sidecar by service name over `libnet`.
+- **Browser UI**: grid + sortable table views (persisted), dark mode, clickable
+  author search; covers cached to `data/covers` for fast grid loads.
 - **Library view** sorts by author, then title; "Recently Added" (OPDS) stays
   newest-first.
+- **The two-container stack** builds and runs via `make up`; the Go service reaches
+  the sidecar by service name over `libnet`.
 - **Test suite**: hermetic Go tests across catalog, opds, epub, drm, web, ingest;
   green under `-race`.
 
-- **Browser reader**: `epub.js` + `jszip` are vendored into
-  `internal/web/assets/` and embedded in the binary; the reader page renders books
-  and persists reading position.
+- **Browser reader**: `epub.js` + `jszip` are vendored under
+  `internal/web/assets/vendor/` and embedded in the binary; the reader renders
+  books, persists reading position, and recolors for dark mode.
+
+Built but not yet verified against a real run:
+
+- **Web first-run setup**: the form + sidecar `/setup` are wired and render
+  correctly, but the Adobe registration path has not been exercised end-to-end
+  (the CLI `setup.py` path is the proven one).
 
 Not yet done:
 
