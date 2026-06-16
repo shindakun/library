@@ -4,9 +4,10 @@
 
 # library
 
-A self-hosted ebook library: browser reader + OPDS feed for the **Xteink X4
-(Crosspoint firmware)**, with an import pipeline that fulfills Adobe `.acsm`
-files and strips legacy ADEPT DRM on the way in.
+A self-hosted ebook library: browser reader + an OPDS feed for any e-reader
+(verified on the **Xteink X4** running Crosspoint firmware), with an import
+pipeline that fulfills Adobe `.acsm` files and strips legacy ADEPT DRM on the
+way in.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale, and
 [docs/DEPLOY.md](docs/DEPLOY.md) for deploying the compose stack on any Docker
@@ -20,9 +21,10 @@ host (with notes for a Proxmox LXC).
 - **`drm-sidecar`**: quarantined Python worker. Runs `acsm-calibre-plugin`
   (fulfillment) + DeDRM's `ineptepub` (decryption). Touches `/secrets` read-only.
 
-The X4 points its OPDS client at `http://<host>:8080/opds` and browses/downloads
-over WiFi. **OPDS feeds are always paged** (30/page) so the device never receives
-an unbounded feed it could choke on (see docs/DESIGN.md §5.4.1).
+Any OPDS client points at `http://<host>:8080/opds` to browse and download over
+WiFi (the Xteink X4 is the verified test device, but it is standard OPDS 1.2).
+**Feeds are always paged** (30/page) so a memory-constrained reader never
+receives an unbounded feed it could choke on (see docs/DESIGN.md §5.4.1).
 
 ## Layout
 

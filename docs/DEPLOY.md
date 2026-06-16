@@ -124,7 +124,8 @@ into `secrets/`. Re-run either method to re-authorize.
 
 ## 6. Operating it
 
-- **Add the X4:** point its OPDS client at `http://<lan-ip>:8080/opds`.
+- **Add a reader:** point any OPDS client (the X4, or another e-reader) at
+  `http://<lan-ip>:8080/opds`.
 - **Browser library:** `http://<lan-ip>:8080/`.
 - **Import:** drop or upload `.acsm` / `.epub`; the watcher fulfills + decrypts.
 - **Update:** `docker compose -f docker-compose.prod.yml pull && ... up -d`

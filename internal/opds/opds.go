@@ -28,8 +28,9 @@ import (
 	"github.com/steve/library/internal/catalog"
 )
 
-// PageSize bounds every acquisition feed. Kept deliberately small for the X4's
-// limited memory. Tune only after testing on the real device.
+// PageSize bounds every acquisition feed so a memory-constrained OPDS client
+// never receives an unbounded feed. Kept deliberately small for the X4's limited
+// memory (ESP32C3); tune only after testing on the real device.
 const PageSize = 30
 
 // Handler serves the OPDS endpoints. baseURL is how the device reaches us
@@ -189,7 +190,7 @@ func (h *Handler) bookEntry(b *catalog.Book) entry {
 		Title:   b.Title,
 		Updated: now(),
 		Links: []link{
-			// The acquisition link: this is what the X4 downloads.
+			// The acquisition link: this is what the OPDS client downloads.
 			{Rel: relAcq, Href: h.abs("/book/" + slug + "/file"), Type: typeEpub},
 		},
 	}

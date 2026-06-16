@@ -24,8 +24,10 @@ Adobe-DRM books by fulfilling `.acsm` files and stripping the legacy ADEPT DRM o
 ### Goals
 
 1. **Browser library + reader.** Catalog every EPUB; read any of them in a browser.
-2. **Xteink X4 / Crosspoint.** No device-side code. The X4's built-in OPDS client points
-   at our `/opds` feed and browses/downloads the whole library over WiFi.
+2. **E-reader access over OPDS.** No device-side code: any OPDS client points at
+   the `/opds` feed and browses/downloads the library over WiFi. The Xteink X4
+   (Crosspoint firmware) is the primary target and verified device, but the feed
+   is standard OPDS 1.2, so other readers work too.
 3. **Adobe DRM import.** Drop an `.acsm` (or an already-fulfilled ADEPT EPUB) into an
    import folder; the system fulfills the download, strips ADEPT DRM, and the clean EPUB
    lands in the library. Almost all DRM here is **Adobe Digital Editions (ADEPT)**.
@@ -263,7 +265,7 @@ POST /api/upload             upload an .acsm / .epub into the import dir
 POST /api/setup              one-time Adobe authorization (first-run form, §5.8)
 GET  /static/...             embedded CSS/JS/vendor assets
 
-# --- OPDS (what the X4 consumes) ---
+# --- OPDS (consumed by any OPDS client) ---
 GET  /opds                   root navigation feed (links to subsections)
 GET  /opds/new               recently added (acquisition feed)
 GET  /opds/all               full acquisition feed (paginated, rel=next/prev)
@@ -274,9 +276,10 @@ GET  /opds/opensearch.xml    OpenSearch description doc
 Per-author and per-series OPDS navigation feeds are a possible future addition;
 v1 ships the root, new, all, and search feeds above.
 
-### 5.4 OPDS specifics (the X4 contract)
+### 5.4 OPDS specifics (the e-reader contract)
 
-This is the load-bearing interop point, so it gets called out explicitly:
+This is the load-bearing interop point with OPDS clients, so it gets called out
+explicitly:
 
 - **OPDS 1.2** (Atom-based). Crosspoint's client supports in-catalog search, next/prev
   pagination, multiple servers, relative paths, and KOReader-compatible download filenames
@@ -287,12 +290,14 @@ This is the load-bearing interop point, so it gets called out explicitly:
 - Search advertised via `rel="search" type="application/opensearchdescription+xml"`.
 - Download filenames set via `Content-Disposition` so Crosspoint names files sanely.
 
-#### 5.4.1 PAGING IS MANDATORY (X4 must never get an unbounded feed)
+#### 5.4.1 PAGING IS MANDATORY (no client gets an unbounded feed)
 
-The X4 runs on an **ESP32C3 with very little RAM**. Handing its OPDS client one giant
-acquisition feed (every book in the library serialized into a single Atom document) can
-make the firmware **hang or OOM while parsing**. This is a hard correctness requirement,
-not a nicety. The design enforces it two ways:
+Memory-constrained OPDS clients can hang or OOM parsing a huge feed. The
+motivating case: the X4 runs on an **ESP32C3 with very little RAM**, and handing
+it one giant acquisition feed (every book serialized into a single Atom document)
+can **hang or OOM the firmware while parsing**. Capping the page protects any
+such client. This is a hard correctness requirement, not a nicety. The design
+enforces it two ways:
 
 1. **The root feed (`/opds`) is navigation-only.** It lists *no books*, only a few links
    to bounded subsections (Recently Added, All Books, Search). So the entry point is tiny
