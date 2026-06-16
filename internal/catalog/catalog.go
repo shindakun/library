@@ -59,21 +59,88 @@ func (b *Book) Slug() string {
 type Catalog struct {
 	db          *sql.DB
 	libraryRoot string
+	coversDir   string // cache of extracted cover images, keyed by slug
 }
 
 // Open opens (and migrates) the SQLite catalog at dbPath. libraryRoot is the
-// directory under which EPUB files live; book.Path is relative to it.
-func Open(dbPath, libraryRoot string) (*Catalog, error) {
+// directory under which EPUB files live; book.Path is relative to it. coversDir
+// is where extracted cover images are cached (keyed by slug); pass "" to disable
+// the cache (covers are then always read live from the epub).
+func Open(dbPath, libraryRoot, coversDir string) (*Catalog, error) {
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
-	c := &Catalog{db: db, libraryRoot: libraryRoot}
+	c := &Catalog{db: db, libraryRoot: libraryRoot, coversDir: coversDir}
+	if coversDir != "" {
+		_ = os.MkdirAll(coversDir, 0o755)
+	}
 	if err := c.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return c, nil
+}
+
+// CoverCachePath returns the on-disk cache path for a book's cover, or "" if the
+// cover cache is disabled or no cached file exists. ext is the file extension
+// the cover was stored with (e.g. ".jpg").
+func (c *Catalog) CoverCachePath(b *Book) string {
+	if c.coversDir == "" {
+		return ""
+	}
+	for _, ext := range []string{".jpg", ".png", ".gif", ".svg"} {
+		p := filepath.Join(c.coversDir, b.Slug()+ext)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// CacheCoverData writes already-extracted cover bytes to the cache keyed by the
+// book's slug. Used to lazily populate the cache on a handler cache-miss (a book
+// indexed before the cache existed). Best-effort; no-op if the cache is disabled.
+func (c *Catalog) CacheCoverData(b *Book, data []byte, mime string) {
+	if c.coversDir == "" || len(data) == 0 {
+		return
+	}
+	dst := filepath.Join(c.coversDir, b.Slug()+coverExt(mime))
+	_ = os.WriteFile(dst, data, 0o644)
+}
+
+// cacheCover extracts the cover from the epub at absPath and writes it to the
+// covers dir keyed by slug. Best-effort: a failure here never fails indexing.
+func (c *Catalog) cacheCover(absPath, slug string) {
+	if c.coversDir == "" {
+		return
+	}
+	// Don't re-extract if any cached cover already exists for this slug.
+	for _, ext := range []string{".jpg", ".png", ".gif", ".svg"} {
+		if _, err := os.Stat(filepath.Join(c.coversDir, slug+ext)); err == nil {
+			return
+		}
+	}
+	data, mime, err := epub.CoverImage(absPath)
+	if err != nil {
+		return // no cover in the epub; nothing to cache
+	}
+	dst := filepath.Join(c.coversDir, slug+coverExt(mime))
+	_ = os.WriteFile(dst, data, 0o644)
+}
+
+// coverExt maps a cover mime type to a file extension.
+func coverExt(mime string) string {
+	switch mime {
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ".jpg"
+	}
 }
 
 func (c *Catalog) Close() error { return c.db.Close() }
@@ -130,6 +197,15 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
+	}
+	// Cache the cover so the grid does not re-open the epub on every request.
+	// Best-effort; slug is the first 16 hex of the content hash.
+	if meta.HasCover {
+		slug := hash
+		if len(slug) >= 16 {
+			slug = slug[:16]
+		}
+		c.cacheCover(absPath, slug)
 	}
 	return id, nil
 }

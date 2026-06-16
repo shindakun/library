@@ -1,8 +1,8 @@
-# Secrets — Adobe activation + decryption keys. NEVER commit.
+# Secrets: Adobe activation + decryption keys. NEVER commit.
 /secrets/*
 !/secrets/.gitkeep
 
-# Loan/purchase tokens and any books — local only.
+# Loan/purchase tokens and any books: local only.
 *.acsm
 *.epub
 *.pdf
@@ -13,6 +13,7 @@
 !/data/library/.gitkeep
 /data/import/**
 /data/catalog.db*
+/data/covers/
 
 # Build artifacts
 /library

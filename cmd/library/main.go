@@ -34,14 +34,15 @@ func main() {
 
 	libraryDir := filepath.Join(*dataDir, "library")
 	importDir := filepath.Join(*dataDir, "import")
+	coversDir := filepath.Join(*dataDir, "covers")
 	dbPath := filepath.Join(*dataDir, "catalog.db")
-	for _, d := range []string{libraryDir, importDir} {
+	for _, d := range []string{libraryDir, importDir, coversDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			log.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
 
-	cat, err := catalog.Open(dbPath, libraryDir)
+	cat, err := catalog.Open(dbPath, libraryDir, coversDir)
 	if err != nil {
 		log.Fatalf("open catalog: %v", err)
 	}

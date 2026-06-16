@@ -18,12 +18,97 @@ func newTestCatalog(t *testing.T) (*Catalog, string) {
 	if err := os.MkdirAll(books, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(filepath.Join(dir, "catalog.db"), books)
+	c, err := Open(filepath.Join(dir, "catalog.db"), books, filepath.Join(dir, "covers"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c, books
+}
+
+// makeEPUBWithCover writes an EPUB whose manifest declares a cover image, plus
+// the image bytes, so cover extraction has something to find.
+func makeEPUBWithCover(t *testing.T, libraryDir, file, title string, img []byte) string {
+	t.Helper()
+	p := filepath.Join(libraryDir, file)
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	zw := zip.NewWriter(f)
+	add := func(name string, content []byte) {
+		w, _ := zw.Create(name)
+		_, _ = w.Write(content)
+	}
+	add("META-INF/container.xml", []byte(`<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+<rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`))
+	add("content.opf", []byte(`<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:title>`+title+`</dc:title></metadata>
+<manifest><item id="cover" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+<item id="c" href="c.xhtml" media-type="application/xhtml+xml"/></manifest></package>`))
+	add("cover.jpg", img)
+	add("c.xhtml", []byte("<html><body>hi</body></html>"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestCoverCacheOnIndex verifies indexing a cover-bearing epub writes the cover
+// to the covers dir, and CoverCachePath then finds it.
+func TestCoverCacheOnIndex(t *testing.T) {
+	dir := t.TempDir()
+	library := filepath.Join(dir, "library")
+	covers := filepath.Join(dir, "covers")
+	_ = os.MkdirAll(library, 0o755)
+	c, err := Open(filepath.Join(dir, "catalog.db"), library, covers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+
+	imgBytes := []byte("\xff\xd8\xff\xe0fakejpegdata") // JPEG magic prefix
+	p := makeEPUBWithCover(t, library, "a.epub", "Alpha", imgBytes)
+	if _, err := c.Index(context.Background(), p, "scan"); err != nil {
+		t.Fatal(err)
+	}
+
+	books, _ := c.List(context.Background(), ListOptions{})
+	if len(books) != 1 {
+		t.Fatalf("want 1 book, got %d", len(books))
+	}
+	cached := c.CoverCachePath(books[0])
+	if cached == "" {
+		t.Fatal("cover was not cached on index")
+	}
+	got, err := os.ReadFile(cached)
+	if err != nil || string(got) != string(imgBytes) {
+		t.Errorf("cached cover bytes = %q (err %v), want the original image", got, err)
+	}
+}
+
+// TestCoverCacheDisabled: with no covers dir, CoverCachePath returns "" and
+// indexing still works.
+func TestCoverCacheDisabled(t *testing.T) {
+	dir := t.TempDir()
+	library := filepath.Join(dir, "library")
+	_ = os.MkdirAll(library, 0o755)
+	c, err := Open(filepath.Join(dir, "catalog.db"), library, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	p := makeEPUBWithCover(t, library, "a.epub", "Alpha", []byte("\xff\xd8\xffimg"))
+	if _, err := c.Index(context.Background(), p, "scan"); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := c.List(context.Background(), ListOptions{})
+	if c.CoverCachePath(books[0]) != "" {
+		t.Error("cache disabled but CoverCachePath returned a path")
+	}
 }
 
 // makeEPUB writes a minimal valid EPUB with the given title/author into the
@@ -213,7 +298,7 @@ func TestSlugIsStableAcrossRebuild(t *testing.T) {
 	makeEPUB(t, libraryDir, "a.epub", "Alpha", "Author")
 
 	// First DB: index and capture the slug.
-	c1, err := Open(filepath.Join(dir, "cat1.db"), libraryDir)
+	c1, err := Open(filepath.Join(dir, "cat1.db"), libraryDir, filepath.Join(dir, "covers1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +314,7 @@ func TestSlugIsStableAcrossRebuild(t *testing.T) {
 
 	// Fresh DB over the same files (simulating a rebuild). The integer id may
 	// differ, but the slug MUST be identical and resolve to the same book.
-	c2, err := Open(filepath.Join(dir, "cat2.db"), libraryDir)
+	c2, err := Open(filepath.Join(dir, "cat2.db"), libraryDir, filepath.Join(dir, "covers2"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -47,7 +47,7 @@ func newHandler(t *testing.T, n int) *Handler {
 	dir := t.TempDir()
 	books := filepath.Join(dir, "library")
 	_ = os.MkdirAll(books, 0o755)
-	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), books)
+	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), books, filepath.Join(dir, "covers"))
 	if err != nil {
 		t.Fatal(err)
 	}

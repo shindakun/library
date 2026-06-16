@@ -103,11 +103,19 @@ func (s *Server) cover(w http.ResponseWriter, r *http.Request) {
 		s.bookErr(w, err)
 		return
 	}
+	// Fast path: serve the pre-extracted cover from the cache if present.
+	if p := s.Cat.CoverCachePath(b); p != "" {
+		http.ServeFile(w, r, p)
+		return
+	}
+	// Miss (e.g. a book indexed before the cache existed): extract live, populate
+	// the cache for next time, and serve.
 	data, mime, err := epub.CoverImage(s.Cat.AbsPath(b))
 	if err != nil {
 		http.Error(w, "no cover", http.StatusNotFound)
 		return
 	}
+	s.Cat.CacheCoverData(b, data, mime)
 	w.Header().Set("Content-Type", mime)
 	_, _ = w.Write(data)
 }

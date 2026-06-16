@@ -18,7 +18,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 	dir := t.TempDir()
 	imp := filepath.Join(dir, "import")
 	_ = os.MkdirAll(imp, 0o755)
-	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), filepath.Join(dir, "library"))
+	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), filepath.Join(dir, "library"), filepath.Join(dir, "covers"))
 	if err != nil {
 		t.Fatal(err)
 	}
