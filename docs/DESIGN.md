@@ -181,9 +181,10 @@ file lands in import/ (dropped or uploaded)
               move original out of import/ to import/done/ (or import/failed/ on error)
 ```
 
-The Go side is the orchestrator and the bookkeeper; the sidecar is two dumb file→file
-transforms. Each invocation is `docker run --rm -v /secrets:/secrets:ro -v <jobtmp>:/work
-drm-sidecar <step> <args>`.
+The Go side is the orchestrator and the bookkeeper; the sidecar is a small set of
+file→file transforms. The Go service POSTs jobs (`fulfill`, `decrypt`) to the
+long-running sidecar over the internal `libnet` network (see §6.1); the sidecar
+reads `/secrets` and the shared work dir and returns the output path.
 
 ### 4.3 Failure handling
 
@@ -191,7 +192,9 @@ drm-sidecar <step> <args>`.
   surfaced in the UI. Never silently dropped.
 - Fulfillment errors (expired `.acsm`, Adobe-side refusal) → same, with the Adobe response
   captured in the job log.
-- The sidecar is the only component allowed to touch `/secrets`, and only read-only.
+- The sidecar is the only component that touches `/secrets`: it reads the
+  activation + key for fulfill/decrypt, and writes them only during first-run
+  setup (§5.8). Nothing else reads or writes `/secrets`.
 
 ---
 

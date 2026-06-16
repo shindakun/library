@@ -20,7 +20,8 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
   reader (epub.js), OPDS 1.2 feed, import watcher (the `ingest` package), upload
   endpoint. Never imports Python.
 - **`drm-sidecar`**: quarantined Python worker. Runs `acsm-calibre-plugin`
-  (fulfillment) + DeDRM's `ineptepub` (decryption). Touches `/secrets` read-only.
+  (fulfillment) + DeDRM's `ineptepub` (decryption). Reads `/secrets` for the
+  Adobe activation + key, and writes it only during first-run setup.
 
 Any OPDS client points at `http://<host>:8080/opds` to browse and download over
 WiFi (the Xteink X4 is the verified test device, but it is standard OPDS 1.2).
