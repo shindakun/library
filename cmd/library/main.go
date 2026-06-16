@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,16 +22,27 @@ import (
 	"github.com/steve/library/internal/web"
 )
 
+// version is the build version, set via -ldflags "-X main.version=v0.1.0" from
+// the git tag at release time. "dev" for local untagged builds.
+var version = "dev"
+
 func main() {
 	var (
-		addr       = flag.String("addr", env("LIBRARY_ADDR", ":8080"), "listen address")
-		dataDir    = flag.String("data", env("LIBRARY_DATA", "./data"), "data directory (books, import, catalog.db)")
-		baseURL    = flag.String("base-url", env("LIBRARY_BASE_URL", "http://localhost:8080"), "absolute base URL the X4 uses to reach this server")
-		sidecarURL = flag.String("sidecar", env("DRM_SIDECAR_URL", "http://localhost:7000"), "DRM sidecar worker URL")
-		scanOnBoot = flag.Bool("scan", true, "scan the books dir for new files on startup")
-		reorganize = flag.Bool("reorganize", false, "move existing books into Author/Title.epub layout on startup, then continue")
+		addr        = flag.String("addr", env("LIBRARY_ADDR", ":8080"), "listen address")
+		dataDir     = flag.String("data", env("LIBRARY_DATA", "./data"), "data directory (books, import, catalog.db)")
+		baseURL     = flag.String("base-url", env("LIBRARY_BASE_URL", "http://localhost:8080"), "absolute base URL the X4 uses to reach this server")
+		sidecarURL  = flag.String("sidecar", env("DRM_SIDECAR_URL", "http://localhost:7000"), "DRM sidecar worker URL")
+		scanOnBoot  = flag.Bool("scan", true, "scan the books dir for new files on startup")
+		reorganize  = flag.Bool("reorganize", false, "move existing books into Author/Title.epub layout on startup, then continue")
+		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("library", version)
+		return
+	}
+	log.Printf("library %s starting", version)
 
 	libraryDir := filepath.Join(*dataDir, "library")
 	importDir := filepath.Join(*dataDir, "import")

@@ -8,16 +8,29 @@ Docker**, pulling prebuilt **multi-arch images from GHCR**.
 ## 1. Build path: GHCR (CI builds, the host pulls)
 
 CI (`.github/workflows/release.yml`) builds `linux/amd64` + `linux/arm64`
-images on every push to `main` and on version tags, and pushes them to GHCR:
+images on every push to `main` and on version tags, and pushes them to GHCR
+nested under the repo:
 
-- `ghcr.io/<owner>/<repo>-library`
-- `ghcr.io/<owner>/<repo>-drm-sidecar`
+- `ghcr.io/shindakun/library/server`
+- `ghcr.io/shindakun/library/sidecar`
 
 Tags: `latest` and `main` track the default branch; `vX.Y.Z` tags are pinned
 releases. The Proxmox host never builds; it pulls.
 
 If the GHCR packages are private, create a classic PAT with `read:packages` and
 `docker login ghcr.io` on the host once.
+
+### Cutting a release
+
+Releases are tag-driven, from the repo (not the Proxmox host):
+
+```sh
+make release VERSION=v0.1.0
+```
+
+This runs the checks, tags `v0.1.0`, and pushes `main` + the tag. CI then builds
+the multi-arch images (stamped with the version) and creates the GitHub Release.
+The Proxmox host deploys a release by setting `TAG=v0.1.0` below.
 
 ## 2. The Proxmox LXC
 
@@ -53,14 +66,17 @@ once populated: it is the whole Adobe authorization.
 From `/opt/library` (where the prod compose and state dirs live):
 
 ```sh
-IMAGE=ghcr.io/<owner>/<repo> TAG=latest \
+TAG=v0.1.0 \
 LIBRARY_BASE_URL=http://<lan-ip>:8080 \
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-`LIBRARY_BASE_URL` must be the host's LAN address so the OPDS feed emits links
-the Xteink X4 can fetch. The repo's `make prod-up` / `make prod-deploy` targets
-wrap these commands if you have the repo checked out on the host.
+`TAG` selects the release to run (`latest` tracks main; pin a `vX.Y.Z` for a
+release). `REGISTRY` defaults to `ghcr.io/shindakun/library`; override it only if
+you forked. `LIBRARY_BASE_URL` must be the host's LAN address so the OPDS feed
+emits links the Xteink X4 can fetch. The repo's `make prod-up` / `make
+prod-deploy` targets wrap these commands if you have the repo checked out on the
+host.
 
 The prod compose (`docker/docker-compose.prod.yml`) differs from the dev
 `docker-compose.yml`: it pulls images instead of building, and drops the

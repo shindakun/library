@@ -22,9 +22,17 @@ LIBRARY_BASE_URL  ?= http://$(LANIP):8080
 
 ## ---- Go ----
 
+# Version stamped into the binary: the exact tag if HEAD is tagged, else the
+# nearest tag + commits + short SHA (e.g. v0.1.0-3-gabc1234), else "dev".
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 .PHONY: build
-build: ## Build the Go binary to ./bin/library
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/library ./cmd/library
+build: ## Build the Go binary to ./bin/library (version-stamped)
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/library ./cmd/library
+
+.PHONY: version
+version: ## Print the version that would be stamped
+	@echo $(VERSION)
 
 .PHONY: test
 test: ## Run Go tests
@@ -112,9 +120,27 @@ ps: ## Show stack status
 .PHONY: restart
 restart: down up ## Restart the stack
 
+## ---- Release ----
+# Cut a release by pushing a vX.Y.Z tag; CI (.github/workflows/release.yml) then
+# builds multi-arch images to GHCR and creates the GitHub Release. Requires the
+# working tree to be clean and on main, and that main is pushed.
+
+.PHONY: release
+release: ## Tag and push a release: make release VERSION=v0.1.0
+	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "VERSION must be vX.Y.Z, got '$(VERSION)'"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree not clean; commit first"; exit 1; }
+	@git rev-parse "$(VERSION)" >/dev/null 2>&1 && { echo "tag $(VERSION) already exists"; exit 1; } || true
+	@echo "Running checks before tagging..."
+	@$(MAKE) --no-print-directory check
+	git tag -a "$(VERSION)" -m "$(VERSION)"
+	git push origin main
+	git push origin "$(VERSION)"
+	@echo "Pushed $(VERSION). CI will build images to GHCR and cut the GitHub Release."
+	@echo "Watch: gh run watch  (or the Actions tab)"
+
 ## ---- Production (Proxmox: GHCR images, no local build) ----
 # Run these ON the Proxmox guest. Set LIBRARY_BASE_URL to the host LAN address,
-# and IMAGE/TAG if not using the defaults baked into the prod compose file.
+# and REGISTRY/TAG if not using the defaults baked into the prod compose file.
 
 .PHONY: prod-pull
 prod-pull: ## Pull the latest prod images from GHCR

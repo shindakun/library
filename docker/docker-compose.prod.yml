@@ -5,7 +5,9 @@
 # (userns_mode: keep-id, SELinux :z/:Z relabels). Set IMAGE and TAG to point at
 # your registry images, and LIBRARY_BASE_URL to the host's LAN address.
 #
-#   IMAGE=ghcr.io/<owner>/<repo> TAG=latest \
+# Images are nested under the repo: REGISTRY/server and REGISTRY/sidecar.
+#
+#   REGISTRY=ghcr.io/shindakun/library TAG=v0.1.0 \
 #   LIBRARY_BASE_URL=http://<lan-ip>:8080 \
 #   docker compose -f docker/docker-compose.prod.yml up -d
 #
@@ -13,7 +15,7 @@
 # Proxmox guest, put those on a persistent path (e.g. a mounted dataset).
 services:
   library:
-    image: ${IMAGE:-ghcr.io/steve/library}-library:${TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/shindakun/library}/server:${TAG:-latest}
     ports:
       - "8080:8080"
     environment:
@@ -29,7 +31,7 @@ services:
     restart: unless-stopped
 
   drm-sidecar:
-    image: ${IMAGE:-ghcr.io/steve/library}-drm-sidecar:${TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/shindakun/library}/sidecar:${TAG:-latest}
     environment:
       SECRETS_DIR: /secrets
       WORK_DIR: /data/import/work
