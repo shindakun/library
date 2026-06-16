@@ -5,9 +5,10 @@ OPDS catalog the Xteink X4 (Crosspoint firmware) browses over WiFi, and ingests
 Adobe-DRM books by fulfilling `.acsm` files and stripping the legacy ADEPT DRM on import.
 
 - **Status:** Implemented and verified end-to-end via the two-container compose
-  stack. Pipeline (fulfill, decrypt, catalog), browser reader, OPDS feed, web
-  upload, cover cache, first-run setup all working. Not yet validated against real
-  X4 hardware. See §9 (resolved decisions and future work) and README.md.
+  stack, including the real Xteink X4 (it browses the OPDS feed and downloads
+  over WiFi). Pipeline (fulfill, decrypt, catalog), browser reader, OPDS feed,
+  web upload, cover cache, first-run setup all working. See §9 (resolved
+  decisions and future work) and README.md.
 - **Author:** steve
 - **Date:** 2026-06-15
 - **Stack:** Go service (single static binary) + a quarantined Python "DRM sidecar"
@@ -453,7 +454,8 @@ a), so no container needs the Podman socket.
   Adobe account need that account's `.der`. Multi-account legacy collections need multiple
   keys in the pipeline; v1 assumes one.
 - **`.acsm` files expire.** Fulfillment must happen reasonably soon after download.
-- **X4 OPDS quirks unknown until tested.** Hence step 2's early hardware check.
+- **X4 OPDS interop:** verified on the real device (browse + download work); the
+  paging contract (§5.4) held up against the actual Crosspoint client.
 - **Legal/personal:** DRM removal of content you own, for personal device interop, on a
   LAN-only host. Keep `/secrets` private; don't expose the service publicly in v1.
 
@@ -469,11 +471,11 @@ Decisions settled during implementation:
    via the web UI; both converge on the same pipeline.
 3. **Adobe accounts:** single account. A multi-account legacy collection would need
    one `.der` per account in the pipeline; out of scope for v1.
+4. **X4 interop:** verified on the real device. The Xteink X4 browses the paged
+   OPDS feed and downloads books over WiFi, confirming the §5.4 contract.
 
 Open for later:
 
 - **Cover/metadata enrichment:** EPUB-embedded metadata only in v1. Fetching from an
   external source (Google Books / OpenLibrary) for sparse files is a possible
   enhancement.
-- **X4 hardware validation:** the OPDS feed is spec-correct and paged, but has not
-  yet been consumed by a real Crosspoint device.

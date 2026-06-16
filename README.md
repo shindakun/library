@@ -197,13 +197,11 @@ Working and verified end-to-end via the compose stack:
   `internal/web/assets/vendor/` and embedded in the binary; the reader renders
   books, persists reading position, and recolors for dark mode.
 
+- **Xteink X4**: verified against the real device, it browses the OPDS feed and
+  downloads books over WiFi.
+
 Built but not yet verified against a real run:
 
 - **Web first-run setup**: the form + sidecar `/setup` are wired and render
   correctly, but the Adobe registration path has not been exercised end-to-end
   (the CLI `setup.py` path is the proven one).
-
-Not yet done:
-
-- **Not yet tested on the actual X4**: the OPDS feed is spec-correct and paged,
-  but Crosspoint's parser hasn't consumed it from real hardware.
