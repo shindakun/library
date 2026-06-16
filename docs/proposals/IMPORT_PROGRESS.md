@@ -140,10 +140,15 @@ Move import off the library grid into its own page, cleaner and purpose-built:
 
 ## 6. Build order
 
-1. **Job model**: `Jobs` registry + `Job` on the `Importer`; wire `Start/Update/
-   Finish` into `handle()` at the existing log points. Replace the `fmt.Printf`s
-   with job updates (keep a log line too, for the container log). Unit-test the
-   registry (state transitions, snapshot, subscribe/broadcast, retention).
+1. **Job model** (DONE): `internal/ingest/jobs.go` (`Job`, `Jobs` registry with
+   `Start/Update/Finish/Snapshot/Subscribe`, count+TTL retention, copy-on-
+   broadcast, drop-on-slow-subscriber); `Importer.JobRegistry()` lazy accessor;
+   wired through `handle()` and `pipeline()` (fulfilling/decrypting/verifying/
+   indexing steps; done/failed/skipped terminals; success records the book slug).
+   The job is created BEFORE `pipelineMu` is taken, so a waiting import shows as
+   "queued". `jobs_test.go` covers lifecycle, unknown-id no-ops, subscribe/
+   broadcast, copy-isolation, unsubscribe, slow-subscriber-no-block, and all three
+   retention paths; race-clean.
 2. **API**: `GET /api/imports` (snapshot) + `GET /api/imports/stream` (SSE).
    Test the snapshot endpoint; SSE is verified structurally + in the browser.
 3. **Import page**: `imports.html` + `imports.js`, the relocated upload control,
@@ -160,7 +165,10 @@ Move import off the library grid into its own page, cleaner and purpose-built:
 - **SSE vs poll:** SSE chosen (real-time, server->client only, stdlib, no
   dependency). `GET /api/imports` stays as the initial-load + reconnect fallback.
 - **Job identity:** needs to be stable for the life of one import so SSE updates
-  target the right row. A ULID at `Start` is simplest; it does not need to persist.
+  target the right row. **Implemented** as a process-local atomic counter
+  (`strconv` of an incrementing `atomic.Uint64`), not a ULID: ids only need
+  uniqueness within one process run and do not persist, so no dependency is
+  warranted. (Revised from the original "ULID" note.)
 - **Concurrency:** imports are already serialized by `pipelineMu` (one at a time),
   so at most one job is `running`; others are `queued`. The page shows the queue.
   If import parallelism is ever added, the job model already supports N running.

@@ -44,6 +44,16 @@ type Importer struct {
 	mu         sync.Mutex
 	inFlight   map[string]bool // paths currently being processed (dedupe Create+Write)
 	pipelineMu sync.Mutex      // serializes imports so work-dir cleanup is unambiguous
+
+	jobsOnce sync.Once
+	jobs     *Jobs
+}
+
+// JobRegistry returns the importer's import-job registry (lazily created),
+// which the web layer reads for the /imports page and SSE stream.
+func (im *Importer) JobRegistry() *Jobs {
+	im.jobsOnce.Do(func() { im.jobs = newJobs() })
+	return im.jobs
 }
 
 // cleanWorkDir empties the sidecar scratch dir. Safe because imports are
@@ -168,6 +178,13 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	if _, err := os.Stat(hostPath); err != nil {
 		return // already moved
 	}
+
+	// Register the job BEFORE taking the pipeline lock, so a job waiting its turn
+	// shows as "queued" in the UI (imports are serialized; only one runs at once).
+	name := filepath.Base(hostPath)
+	jobs := im.JobRegistry()
+	jobID := jobs.Start(name, sourceFor(hostPath))
+
 	// Serialize imports: the sidecar is single-tenant and the work dir is shared
 	// scratch, so one job at a time keeps cleanup unambiguous.
 	im.pipelineMu.Lock()
@@ -176,20 +193,33 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	// intermediate (and any clean file left behind on a mid-pipeline error)
 	// never accumulates. The work dir is pure transient scratch.
 	defer im.cleanWorkDir()
-	fmt.Printf("import: processing %s\n", filepath.Base(hostPath))
 
-	cleanHostPath, err := im.pipeline(ctx, hostPath)
+	jobs.Update(jobID, func(j *Job) { j.Step = "processing" })
+	fmt.Printf("import: processing %s\n", name)
+
+	// failJob logs, moves the original to failed/, and marks the job failed.
+	failJob := func(cause error) {
+		im.fail(hostPath, cause)
+		jobs.Finish(jobID, StateFailed, cause.Error(), "")
+	}
+
+	onProgress := func(step string, frac float64, detail string) {
+		jobs.Update(jobID, func(j *Job) { j.Step = step; j.Progress = frac; j.Detail = detail })
+	}
+
+	cleanHostPath, err := im.pipeline(ctx, hostPath, onProgress)
 	if err != nil {
-		im.fail(hostPath, err)
+		failJob(err)
 		return
 	}
 
 	// Verify it's a real, parseable epub BEFORE committing it to the library:
 	// metadata read doubles as a "is this actually a valid book" check, and the
 	// title gives us a clean library filename (no ".clean" pipeline artifact).
+	jobs.Update(jobID, func(j *Job) { j.Step = "verifying" })
 	meta, err := epub.Read(cleanHostPath)
 	if err != nil {
-		im.fail(hostPath, fmt.Errorf("verify clean epub: %w", err))
+		failJob(fmt.Errorf("verify clean epub: %w", err))
 		return
 	}
 
@@ -198,25 +228,28 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	// and a second catalog row sharing the same content-hash slug (ambiguous URL).
 	if hash, herr := catalog.FileHash(cleanHostPath); herr == nil {
 		if dup, _ := im.Cat.HasHash(ctx, hash); dup {
-			fmt.Printf("import: %s is already in the library (duplicate content), skipping\n", filepath.Base(hostPath))
+			fmt.Printf("import: %s is already in the library (duplicate content), skipping\n", name)
 			im.archive(hostPath, "done")
+			jobs.Finish(jobID, StateSkipped, "already in the library (duplicate content)", "")
 			return
 		}
 	}
 
 	// Organize on disk as Author/Title.epub.
+	jobs.Update(jobID, func(j *Job) { j.Step = "indexing" })
 	dest := filepath.Join(im.LibraryDir, fileutil.LibraryRelPath(meta.Authors, meta.Title))
 	dest = uniquePath(dest)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		im.fail(hostPath, fmt.Errorf("create author dir: %w", err))
+		failJob(fmt.Errorf("create author dir: %w", err))
 		return
 	}
 	if err := moveFile(cleanHostPath, dest); err != nil {
-		im.fail(hostPath, fmt.Errorf("move clean epub: %w", err))
+		failJob(fmt.Errorf("move clean epub: %w", err))
 		return
 	}
-	if _, err := im.Cat.Index(ctx, dest, sourceFor(hostPath)); err != nil {
-		im.fail(hostPath, fmt.Errorf("index: %w", err))
+	id, err := im.Cat.Index(ctx, dest, sourceFor(hostPath))
+	if err != nil {
+		failJob(fmt.Errorf("index: %w", err))
 		return
 	}
 
@@ -227,7 +260,13 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	if cleanHostPath != hostPath {
 		im.archive(hostPath, "done")
 	}
-	fmt.Printf("import: done %s\n", filepath.Base(hostPath))
+	fmt.Printf("import: done %s\n", name)
+
+	slug := ""
+	if b, gerr := im.Cat.Get(ctx, id); gerr == nil {
+		slug = b.Slug()
+	}
+	jobs.Finish(jobID, StateDone, "", slug)
 }
 
 // pipeline turns a dropped file into a clean, DRM-free epub and returns its
@@ -240,7 +279,14 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 // Sidecar outputs land in the shared work dir, so we resolve the sidecar's
 // returned path to the host view by basename. The no-DRM case returns the
 // original import path unchanged.
-func (im *Importer) pipeline(ctx context.Context, hostPath string) (string, error) {
+// progressFunc reports a pipeline step transition (and an optional 0..1 fraction
+// + detail) to the import-job tracker. nil-safe via the noopProgress default.
+type progressFunc func(step string, frac float64, detail string)
+
+func (im *Importer) pipeline(ctx context.Context, hostPath string, onProgress progressFunc) (string, error) {
+	if onProgress == nil {
+		onProgress = func(string, float64, string) {}
+	}
 	isACSM := strings.EqualFold(filepath.Ext(hostPath), ".acsm")
 
 	// Fast path: a plain DRM-free epub needs no fulfillment or decryption.
@@ -258,12 +304,14 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string) (string, erro
 	// DRM path: fulfill (.acsm only) then decrypt via the sidecar.
 	in := im.SidecarPath(hostPath)
 	if isACSM {
+		onProgress("fulfilling", 0, "")
 		out, err := im.DRM.Fulfill(ctx, in)
 		if err != nil {
 			return "", fmt.Errorf("fulfill: %w", err)
 		}
 		in = out
 	}
+	onProgress("decrypting", 0, "")
 	cleanSidecarPath, err := im.DRM.Decrypt(ctx, in)
 	if err != nil {
 		return "", fmt.Errorf("decrypt: %w", err)
