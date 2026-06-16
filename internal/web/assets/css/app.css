@@ -32,6 +32,16 @@ input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); bord
 .banner{ background:var(--banner-bg); border-bottom:1px solid var(--banner-border); color:var(--banner-fg); padding:8px 24px; font-size:13px; }
 .empty { padding:48px 24px; color:var(--faint); }
 
+/* First-run setup form */
+.setup { max-width:440px; margin:48px auto; padding:24px 28px; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+.setup h2 { margin:0 0 8px; font-size:20px; }
+.setup p { color:var(--muted); font-size:14px; }
+.setup form { display:flex; flex-direction:column; gap:12px; margin:16px 0 8px; }
+.setup label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+.setup input, .setup select { padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; }
+.setup button { padding:9px 14px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
+.setup .hint { font-size:12px; color:var(--faint); }
+
 /* --- Grid (cover) view --- */
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:20px; padding:24px; }
 .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }

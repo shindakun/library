@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/steve/library/internal/catalog"
+	"github.com/steve/library/internal/drm"
 	"github.com/steve/library/internal/epub"
 	"github.com/steve/library/internal/fileutil"
 )
@@ -32,16 +33,19 @@ type Server struct {
 	// ImportDir is where browser uploads land, so the import watcher picks them
 	// up and runs the same fulfill/decrypt pipeline as a manual drop.
 	ImportDir string
-	tpl       *template.Template
+	// DRM drives the sidecar; used for the first-run setup form (check whether
+	// Adobe is configured, and run setup). May be nil (setup form disabled).
+	DRM *drm.Client
+	tpl *template.Template
 }
 
 // New parses templates and returns a Server.
-func New(cat *catalog.Catalog, importDir string) (*Server, error) {
+func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client) (*Server, error) {
 	tpl, err := template.ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
-	return &Server{Cat: cat, ImportDir: importDir, tpl: tpl}, nil
+	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, tpl: tpl}, nil
 }
 
 // Register wires the browser + API routes onto mux.
@@ -56,6 +60,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/books/{slug}/read", s.apiSaveRead)
 	mux.HandleFunc("POST /api/scan", s.apiScan)
 	mux.HandleFunc("POST /api/upload", s.apiUpload)
+	mux.HandleFunc("POST /api/setup", s.apiSetup)
 	// Static JS/CSS (epub.js lives here once vendored).
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(assets, "assets"))))
 }
@@ -70,9 +75,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "index.html", map[string]any{
-		"Books":    books,
-		"Query":    r.URL.Query().Get("q"),
-		"Uploaded": r.URL.Query().Get("uploaded"),
+		"Books":      books,
+		"Query":      r.URL.Query().Get("q"),
+		"Uploaded":   r.URL.Query().Get("uploaded"),
+		"NeedsSetup": s.needsSetup(r.Context()),
 	})
 }
 
@@ -212,6 +218,49 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/?uploaded="+name, http.StatusSeeOther)
+}
+
+// apiSetup runs one-time Adobe authorization from the first-run form. It
+// forwards the AdobeID/password/version to the sidecar, which writes /secrets.
+// Refuses once already configured (the sidecar enforces this too).
+func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
+	if s.DRM == nil {
+		http.Error(w, "DRM sidecar not configured", http.StatusServiceUnavailable)
+		return
+	}
+	mail := r.FormValue("mail")
+	password := r.FormValue("password")
+	ver, _ := strconv.Atoi(r.FormValue("ade_version"))
+	if ver != 1 && ver != 2 {
+		ver = 1
+	}
+	if mail == "" || password == "" {
+		http.Error(w, "AdobeID email and password are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.DRM.Setup(r.Context(), mail, password, ver); err != nil {
+		http.Error(w, "setup failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, map[string]bool{"configured": true})
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// needsSetup reports whether the first-run setup form should be shown: a DRM
+// sidecar exists, is reachable, and is not yet configured. Any uncertainty
+// (no sidecar, unreachable) returns false so the normal library still renders.
+func (s *Server) needsSetup(ctx context.Context) bool {
+	if s.DRM == nil {
+		return false
+	}
+	configured, err := s.DRM.Configured(ctx)
+	if err != nil {
+		return false // sidecar unreachable; don't block the library on it
+	}
+	return !configured
 }
 
 func (s *Server) apiScan(w http.ResponseWriter, r *http.Request) {

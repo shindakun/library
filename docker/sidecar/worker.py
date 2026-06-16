@@ -69,6 +69,77 @@ def _have_activation():
     return all(os.path.exists(os.path.join(SECRETS, f)) for f in needed)
 
 
+def setup(mail, password, ade_version=1):
+    """One-time Adobe authorization, driven non-interactively (e.g. from the web
+    first-run form). Registers the device + account and exports the decryption
+    key into SECRETS. Refuses if already configured. Mirrors setup.py / the CLI
+    path, but feeds credentials in as arguments instead of TTY prompts.
+
+    Requires SECRETS to be writable (the prod compose mounts it read-write so
+    first-run setup can populate it).
+    """
+    if _have_activation() and _der_key():
+        raise RuntimeError("already configured; setup is only available on first run")
+    if not mail or not password:
+        raise RuntimeError("AdobeID email and password are required")
+    if int(ade_version) not in (1, 2):
+        raise RuntimeError("ade_version must be 1 (ADE 2.0) or 2 (ADE 3.0)")
+
+    env = _acsm_env()
+    # The acsm scripts read credentials from module globals when set, falling
+    # back to input() only when empty. We set them via a tiny driver run in a
+    # temp dir (the scripts write their output files to CWD), then copy results
+    # into SECRETS. Running as a subprocess keeps libadobe's global state out of
+    # this long-lived server process.
+    driver = (
+        "import runpy, sys\n"
+        "sys.argv=['register']\n"
+        "import register_ADE_account as r\n"
+        "r.VAR_MAIL=%r; r.VAR_PASS=%r; r.VAR_VER=%d\n"
+        "r.main()\n"
+    ) % (mail, password, int(ade_version))
+
+    with tempfile.TemporaryDirectory(dir=WORK) as td:
+        # 1. Register + activate -> activation.xml, device.xml, devicesalt.
+        proc = subprocess.run(
+            [sys.executable, "-c", driver],
+            cwd=td, env=env, capture_output=True, text=True, timeout=120,
+        )
+        reg_log = proc.stdout + proc.stderr
+        produced = [f for f in ("activation.xml", "device.xml", "devicesalt")
+                    if os.path.exists(os.path.join(td, f))]
+        if len(produced) != 3:
+            raise RuntimeError("Adobe registration failed:\n" + reg_log)
+        for f in produced:
+            shutil.copy(os.path.join(td, f), os.path.join(SECRETS, f))
+
+        # 2. Export the account decryption key -> adobekey_*.der. The key script
+        #    does its own signIn, so it needs the credentials; VAR_MAIL/VAR_PASS/
+        #    VAR_VER are all module globals (verified against the script), so set
+        #    them and main() runs fully non-interactively.
+        key_driver = (
+            "import sys\n"
+            "sys.argv=['getkey']\n"
+            "import get_key_from_Adobe as g\n"
+            "g.VAR_MAIL=%r; g.VAR_PASS=%r; g.VAR_VER=%d\n"
+            "g.main()\n"
+        ) % (mail, password, int(ade_version))
+        for f in produced:
+            shutil.copy(os.path.join(SECRETS, f), os.path.join(td, f))
+        kproc = subprocess.run(
+            [sys.executable, "-c", key_driver],
+            cwd=td, env=env, capture_output=True, text=True, timeout=120,
+        )
+        key_log = kproc.stdout + kproc.stderr
+        ders = [f for f in os.listdir(td) if f.endswith(".der")]
+        if not ders:
+            raise RuntimeError("Adobe key export failed:\n" + key_log)
+        for f in ders:
+            shutil.copy(os.path.join(td, f), os.path.join(SECRETS, f))
+
+    return {"activation": _have_activation(), "key": _der_key() is not None}
+
+
 def fulfill(input_path):
     """Fulfill an .acsm into an (encrypted) epub using the standalone fulfill.py.
 
@@ -150,6 +221,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
+        if self.path == "/setup":
+            self._handle_setup()
+            return
         if self.path != "/job":
             self._send(404, {"ok": False, "error": "not found"})
             return
@@ -171,6 +245,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"ok": False, "error": "unknown op %r" % op})
         except Exception as e:
             self._send(500, {"ok": False, "error": str(e), "log": traceback.format_exc()})
+
+    def _handle_setup(self):
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            req = json.loads(self.rfile.read(n) or b"{}")
+            result = setup(req.get("mail", ""), req.get("password", ""),
+                           req.get("ade_version", 1))
+            self._send(200, {"ok": True, **result})
+        except Exception as e:
+            self._send(500, {"ok": False, "error": str(e)})
 
     def log_message(self, fmt, *args):
         sys.stderr.write("sidecar: " + (fmt % args) + "\n")

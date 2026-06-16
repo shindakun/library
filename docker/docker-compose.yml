@@ -46,7 +46,8 @@ services:
                                   # root so its intermediates don't re-trigger the
                                   # watcher (see internal/web/watcher.go workDir())
     volumes:
-      - ../secrets:/secrets:ro,Z # activation + .der key, READ ONLY, private relabel
+      - ../secrets:/secrets:Z    # activation + .der key; writable so the web
+                                 # first-run setup can populate it (Z = private relabel)
       - ../data:/data:z          # same data volume; sidecar reads import/, writes results there
     networks:
       - libnet

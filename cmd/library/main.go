@@ -71,7 +71,11 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	websrv, err := web.New(cat, importDir)
+	// DRM sidecar client: drives fulfill/decrypt, and backs the web first-run
+	// setup form. Created before the web server so it can be handed in.
+	drmClient := drm.New(*sidecarURL)
+
+	websrv, err := web.New(cat, importDir, drmClient)
 	if err != nil {
 		log.Fatalf("web: %v", err)
 	}
@@ -79,9 +83,8 @@ func main() {
 
 	(&opds.Handler{Cat: cat, BaseURL: *baseURL}).Register(mux)
 
-	// DRM import watcher. The sidecar may not be up; that's fine, imports just
-	// fail until it is. We probe it once for a friendly startup log.
-	drmClient := drm.New(*sidecarURL)
+	// The sidecar may not be up; that's fine, imports just fail until it is.
+	// We probe it once for a friendly startup log.
 	go func() {
 		hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()

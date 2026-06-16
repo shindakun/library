@@ -19,6 +19,7 @@
 <body>
 <header>
   <h1>Library</h1>
+  {{if not .NeedsSetup}}
   <form class="upload" method="post" action="/api/upload" enctype="multipart/form-data">
     <input type="file" name="file" accept=".acsm,.epub" required>
     <button type="submit">Import</button>
@@ -27,8 +28,31 @@
     <input type="search" name="q" placeholder="Search title, author…" value="{{.Query}}">
   </form>
   <button id="view-btn" class="view-toggle" type="button" onclick="toggleView()" title="Toggle grid/table view">Table</button>
+  {{end}}
   <button id="theme-btn" class="theme-toggle" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
 </header>
+{{if .NeedsSetup}}
+<div class="setup">
+  <h2>First-run setup</h2>
+  <p>Authorize an Adobe account to fulfill and decrypt DRMed books. Use a fresh
+  or throwaway AdobeID. This runs once; the form disappears after.</p>
+  <form method="post" action="/api/setup">
+    <label>AdobeID email<input type="email" name="mail" required autocomplete="username"></label>
+    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+    <label>ADE version
+      <select name="ade_version">
+        <option value="1" selected>2.0 (recommended)</option>
+        <option value="2">3.0</option>
+      </select>
+    </label>
+    <button type="submit">Authorize</button>
+  </form>
+  <p class="hint">Sent over your LAN to the local sidecar; credentials are used
+  only to register with Adobe and are not stored (only the resulting activation
+  + key are kept). On a headless host you can instead run the CLI setup; see
+  docs/DEPLOY.md.</p>
+</div>
+{{else}}
 {{if .Uploaded}}<div class="banner">Queued <strong>{{.Uploaded}}</strong> for import. It will appear below once fulfilled &amp; decrypted (refresh in a few seconds).</div>{{end}}
 {{if .Books}}
 <div class="grid">
@@ -72,6 +96,7 @@
 </div>
 {{else}}
 <p class="empty">No books yet. Drop EPUBs in <code>data/library/</code> and run a scan, or import an <code>.acsm</code>/<code>.epub</code> via the Import button.</p>
+{{end}}
 {{end}}
 </body>
 </html>{{end}}

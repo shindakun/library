@@ -23,7 +23,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cat.Close() })
-	s, err := New(cat, imp)
+	s, err := New(cat, imp, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
