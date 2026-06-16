@@ -1,10 +1,16 @@
+<p align="center">
+  <img src="assets/library.png" alt="library" width="200">
+</p>
+
 # library
 
 A self-hosted ebook library: browser reader + OPDS feed for the **Xteink X4
 (Crosspoint firmware)**, with an import pipeline that fulfills Adobe `.acsm`
 files and strips legacy ADEPT DRM on the way in.
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale.
+See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale, and
+[docs/DEPLOY.md](docs/DEPLOY.md) for deploying on Proxmox (LXC + Docker, GHCR
+images).
 
 ## Architecture (two containers)
 
