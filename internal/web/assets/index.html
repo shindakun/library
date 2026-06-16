@@ -31,11 +31,12 @@
   .banner{ background:var(--banner-bg); border-bottom:1px solid var(--banner-border); color:var(--banner-fg); padding:8px 24px; font-size:13px; }
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:20px; padding:24px; }
   .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
-  .card a { text-decoration:none; color:inherit; }
+  .card a.open { text-decoration:none; color:inherit; display:block; }
   .cover { aspect-ratio:2/3; background:var(--cover-bg) center/cover no-repeat; display:block; }
-  .meta { padding:10px 12px; }
-  .meta .t { font-weight:600; font-size:14px; line-height:1.3; }
-  .meta .a { color:var(--muted); font-size:12px; margin-top:3px; }
+  .card .t { display:block; padding:10px 12px 0; font-weight:600; font-size:14px; line-height:1.3; }
+  .card .a { display:block; padding:3px 12px 10px; color:var(--muted); font-size:12px; line-height:1.35; }
+  .card .a a.author { color:var(--muted); text-decoration:none; }
+  .card .a a.author:hover { color:var(--fg); text-decoration:underline; }
   .empty { padding:48px 24px; color:var(--faint); }
 </style>
 <script>
@@ -78,13 +79,11 @@
 <div class="grid">
   {{range .Books}}
   <div class="card">
-    <a href="/read/{{.Slug}}">
+    <a class="open" href="/read/{{.Slug}}">
       <span class="cover" {{if .HasCover}}style="background-image:url('/book/{{.Slug}}/cover')"{{end}}></span>
-      <span class="meta">
-        <span class="t">{{.Title}}</span>
-        <span class="a">{{range $i,$a := .Authors}}{{if $i}}, {{end}}{{$a}}{{end}}</span>
-      </span>
+      <span class="t">{{.Title}}</span>
     </a>
+    <div class="a">{{range $i,$a := .Authors}}{{if $i}}, {{end}}<a class="author" href="/?q={{$a | urlquery}}">{{$a}}</a>{{end}}</div>
   </div>
   {{end}}
 </div>
