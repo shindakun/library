@@ -1,12 +1,19 @@
 # Implementation guide: metadata editing
 
-Status: **in progress.** Design + build plan for in-browser metadata editing for
-both EPUBs and CBZ comics, kept lightweight (plain HTML forms, a few JSON
-endpoints, no new frontend dependencies). Edits land in the DB first, then are
-embedded into the file (best-effort, verify-before-swap); a successful embed
-replaces the original, a failed one keeps both the original file and the DB edit.
-The slug stays stable across embeds (§3). Most comics have no `ComicInfo.xml`, so
-for them embedding ADDS the metadata rather than replacing it.
+Status: **in progress** (steps 1-4 done; step 5 cover override remains). Design +
+build plan for in-browser metadata editing for both EPUBs and CBZ comics, kept
+lightweight (plain HTML forms, a few JSON endpoints, no new frontend
+dependencies). Edits land in the DB first, then are embedded into the file
+(best-effort, verify-before-swap); a successful embed replaces the original, a
+failed one keeps both the original file and the DB edit. The slug stays stable
+across embeds (§3). Most comics have no `ComicInfo.xml`, so for them embedding
+ADDS the metadata rather than replacing it.
+
+Done: schema + stable slug (1), `catalog.UpdateMetadata` + scan edit-protection
+(2), the comic and epub file writers (3a/3b), and the HTTP/UI: the edit form,
+`PUT /api/books/{slug}` (DB edit then best-effort embed, reporting embed status),
+`catalog.EmbedMetadata` (rewrite-to-temp, verify, swap, rename-on-title-change,
+refresh path/hash/size, slug fixed), and the no-JS form fallback (4).
 
 ## 1. The core tension to resolve first
 
@@ -187,6 +194,38 @@ Keep it consistent with the existing dual JSON/redirect pattern used by
 No htmx/datastar needed: this is one form and one PUT. If bulk editing across
 many books is wanted later, that is the point to reconsider a hypermedia library,
 not now.
+
+**Gaps found building step 4 (the embed glue lives in the catalog, not web):**
+
+- **No single-book file-replace+relocate API existed.** `Reorganize` has the
+  move+path-update+empty-dir-cleanup pattern but is bulk. Embedding needs a
+  single-book operation that: builds the writer input from the edited row, writes
+  a temp file, re-parses it to verify, atomically swaps it in (renaming to the new
+  `Author/Title.<ext>` if the title changed), and updates `path` + `file_hash`
+  (NOT the slug: `slug_override` is fixed). Added `catalog.EmbedMetadata(slug)`
+  that orchestrates this and branches on format to the right writer
+  (`epub.WriteMetadata` / `comic.WriteComicInfo`).
+- **The hash changes, so the cover cache key is unaffected** (cache keys on the
+  stable slug), but `file_hash`/`file_size` must be refreshed or a later scan
+  sees a "changed" file and re-indexes (harmless but wasteful, and would re-run
+  edit-protection). Update both in the same statement as `path`.
+- **Embed is best-effort and decoupled from the DB edit.** `PUT /api/books/{slug}`
+  always does the DB `UpdateMetadata` first (that is the durable change), then
+  attempts `EmbedMetadata`; the response reports embed status
+  (`embedded: true|false` + a reason) so the UI can show "saved, not yet embedded
+  in file" without the edit being lost. A failed embed never 500s the request.
+- **Edge sanitization + parsing.** The handler parses authors/tags from
+  comma-separated input, rejects an over-large body, and validates the JSON shape;
+  the catalog sanitizes again (it does not trust the caller). The slug in the URL
+  is used only to look up a row (never touches the filesystem), so it is not a
+  path-traversal sink; the regenerated filename comes from the sanitized title
+  through `fileutil.LibraryRelPath` (which `SafeFilename`s both segments).
+- **Concurrency with the import watcher.** Embedding renames/replaces a library
+  file while the watcher may be mid-scan. Both are short SQLite transactions and
+  the watcher re-derives from disk; an embed that renames is equivalent to a
+  Reorganize move, which already coexists with scans. No new lock needed, but the
+  embed reads the row, writes the file, then updates the row in one tx so the DB
+  never points at a missing path.
 
 ## 6. Cover editing (separate, avoids zip surgery)
 

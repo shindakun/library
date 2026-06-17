@@ -5,9 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/steve/library/internal/comic"
+	"github.com/steve/library/internal/epub"
+	"github.com/steve/library/internal/fileutil"
 )
 
 // Editable field names. These are the single source of truth shared by
@@ -326,4 +332,117 @@ func setSeries(ctx context.Context, tx *sql.Tx, bookID int64, series string, idx
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO book_series (book_id, series_id, idx) VALUES (?,?,?)`, bookID, sid, idx)
 	return err
+}
+
+// EmbedResult reports the outcome of embedding a metadata edit into a book file.
+type EmbedResult struct {
+	Embedded bool   // true if the file was rewritten and swapped in
+	Reason   string // when not embedded, a short human-readable reason
+}
+
+// EmbedMetadata writes the book's current (edited) catalog metadata into its
+// file: the OPF for an epub, ComicInfo.xml for a comic. It is best-effort and
+// non-destructive: the new file is written to a temp path and re-parsed; only a
+// verified-good rewrite is swapped in. If the title changed, the file is renamed
+// to the regenerated Author/Title.<ext> path. path/file_hash/file_size are
+// updated; the slug is NOT (slug_override is stable). On any failure the original
+// file is left untouched and a reason is returned (Embedded=false, nil error);
+// an error is returned only for unexpected/internal failures.
+func (c *Catalog) EmbedMetadata(ctx context.Context, slug string) (EmbedResult, error) {
+	b, err := c.GetBySlug(ctx, slug)
+	if err != nil {
+		return EmbedResult{}, err
+	}
+	srcAbs := c.AbsPath(b)
+	if _, err := os.Stat(srcAbs); err != nil {
+		return EmbedResult{Reason: "library file missing"}, nil
+	}
+
+	ext := filepath.Ext(b.Path)
+	tmp := srcAbs + ".embed-tmp" + ext
+
+	// Format-specific rewrite into the temp file.
+	switch b.Format {
+	case "cbz":
+		werr := comic.WriteComicInfo(srcAbs, tmp, comic.Metadata{
+			Title:       b.Title,
+			Authors:     b.Authors,
+			Series:      b.Series,
+			SeriesIndex: b.SeriesIndex,
+			Language:    b.Language,
+			Description: b.Description,
+			Published:   b.Published,
+		})
+		if werr != nil {
+			return EmbedResult{Reason: "comic rewrite failed: " + werr.Error()}, nil
+		}
+		if _, verr := comic.Read(tmp); verr != nil {
+			_ = os.Remove(tmp)
+			return EmbedResult{Reason: "rewritten comic did not verify"}, nil
+		}
+	default: // epub
+		authors := append([]string(nil), b.Authors...)
+		werr := epub.WriteMetadata(srcAbs, tmp, epub.Edits{
+			Title:       &b.Title,
+			Language:    &b.Language,
+			Publisher:   &b.Publisher,
+			Description: &b.Description,
+			Date:        &b.Published,
+			Authors:     &authors,
+		})
+		if werr != nil {
+			return EmbedResult{Reason: "epub rewrite failed: " + werr.Error()}, nil
+		}
+		if _, verr := epub.Read(tmp); verr != nil {
+			_ = os.Remove(tmp)
+			return EmbedResult{Reason: "rewritten epub did not verify"}, nil
+		}
+	}
+
+	// Decide the final path: regenerate from the (edited) title, keeping the ext.
+	wantRel := fileutil.LibraryRelPath(b.Authors, b.Title, ext)
+	dstAbs := filepath.Join(c.libraryRoot, wantRel)
+	renaming := dstAbs != srcAbs
+	if renaming {
+		if err := os.MkdirAll(filepath.Dir(dstAbs), 0o755); err != nil {
+			_ = os.Remove(tmp)
+			return EmbedResult{}, err
+		}
+		dstAbs = uniqueAbs(dstAbs)
+		wantRel, _ = filepath.Rel(c.libraryRoot, dstAbs)
+	}
+
+	// Swap the rewritten temp into the destination. os.Rename is atomic within a
+	// filesystem; the temp sits beside the source so this stays on one device.
+	if err := os.Rename(tmp, dstAbs); err != nil {
+		_ = os.Remove(tmp)
+		return EmbedResult{}, fmt.Errorf("swap embedded file: %w", err)
+	}
+	// If we renamed to a new path, the original source file is now superseded;
+	// remove it (the rewritten content lives at dstAbs).
+	if renaming {
+		_ = os.Remove(srcAbs)
+	}
+
+	// Refresh path/hash/size so a later scan does not see a spurious change.
+	newHash, herr := hashFile(dstAbs)
+	if herr != nil {
+		return EmbedResult{}, herr
+	}
+	fi, _ := os.Stat(dstAbs)
+	var size int64
+	if fi != nil {
+		size = fi.Size()
+	}
+	if _, err := c.db.ExecContext(ctx,
+		`UPDATE books SET path=?, file_hash=?, file_size=? WHERE id=?`,
+		wantRel, newHash, size, b.ID); err != nil {
+		return EmbedResult{}, err
+	}
+	if renaming {
+		if dir := filepath.Dir(srcAbs); dir != c.libraryRoot {
+			_ = os.Remove(dir) // tidy an emptied author dir; no-op if non-empty
+		}
+	}
+	return EmbedResult{Embedded: true}, nil
 }

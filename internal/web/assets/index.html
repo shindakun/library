@@ -60,6 +60,7 @@
       <span class="t">{{.Title}}</span>
     </a>
     <div class="a">{{range $i,$a := .Authors}}{{if $i}}, {{end}}<a class="author" href="/?q={{$a | urlquery}}">{{$a}}</a>{{end}}</div>
+    <a class="edit-link" href="/book/{{.Slug}}/edit">Edit</a>
   </div>
   {{end}}
 </div>

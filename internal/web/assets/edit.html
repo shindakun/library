@@ -1,0 +1,64 @@
+{{define "edit.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit &middot; {{.Book.Title}}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script>
+  (function () {
+    const saved = localStorage.getItem("theme");
+    const dark = saved ? saved === "dark"
+                       : matchMedia("(prefers-color-scheme: dark)").matches;
+    if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  })();
+  window.BOOK_SLUG = "{{.Book.Slug}}";
+</script>
+<script src="/static/js/app.js" defer></script>
+<script src="/static/js/edit.js" defer></script>
+</head>
+<body>
+<header>
+  <h1><a class="home" href="/">Library</a> / Edit</h1>
+  <button id="theme-btn" class="theme-toggle" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">&#127769;</button>
+</header>
+
+<div class="edit-wrap">
+  <!-- The form posts (no-JS fallback); edit.js intercepts to PUT JSON. -->
+  <form id="edit-form" method="post" action="/book/{{.Book.Slug}}/edit">
+    <label>Title
+      <input type="text" name="title" value="{{.Book.Title}}" required>
+    </label>
+    <label>Sort title <span class="muted">(blank tracks title)</span>
+      <input type="text" name="sortTitle" value="{{.Book.SortTitle}}">
+    </label>
+    <label>Authors <span class="muted">(comma-separated)</span>
+      <input type="text" name="authors" value="{{.Authors}}">
+    </label>
+    <label>Series
+      <input type="text" name="series" value="{{.Book.Series}}">
+    </label>
+    <label>Series #
+      <input type="text" name="seriesIndex" value="{{if .Book.SeriesIndex}}{{.Book.SeriesIndex}}{{end}}">
+    </label>
+    <label>Language
+      <input type="text" name="language" value="{{.Book.Language}}">
+    </label>
+    <label>Publisher
+      <input type="text" name="publisher" value="{{.Book.Publisher}}">
+    </label>
+    <label>Published
+      <input type="text" name="published" value="{{.Book.Published}}">
+    </label>
+    <label>Description
+      <textarea name="description" rows="5">{{.Book.Description}}</textarea>
+    </label>
+    <div class="edit-actions">
+      <button type="submit">Save</button>
+      <a class="cancel" href="/">Cancel</a>
+      <span id="edit-status" class="edit-status"></span>
+    </div>
+  </form>
+</div>
+</body>
+</html>{{end}}

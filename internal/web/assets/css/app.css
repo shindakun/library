@@ -121,3 +121,20 @@ body[data-fit="width"] #comic-page { width:100%; max-width:1000px; height:auto; 
 body[data-fit="height"] .comic-viewer { align-items:center; }
 body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:calc(100vh - 44px); height:auto; }
 .page-indicator { color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }
+
+/* Metadata edit form */
+.edit-wrap { max-width:640px; margin:24px auto; padding:0 24px; }
+.edit-wrap form { display:flex; flex-direction:column; gap:14px; }
+.edit-wrap label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--muted); }
+.edit-wrap label .muted { color:var(--faint); font-weight:400; }
+.edit-wrap input, .edit-wrap textarea { padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; font-family:inherit; }
+.edit-wrap textarea { resize:vertical; }
+.edit-actions { display:flex; align-items:center; gap:14px; margin-top:4px; }
+.edit-actions button { padding:9px 16px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
+.edit-actions .cancel { color:var(--muted); text-decoration:none; font-size:14px; }
+.edit-actions .cancel:hover { text-decoration:underline; }
+.edit-status { font-size:13px; color:var(--muted); }
+.edit-status.error { color:#c0392b; }
+/* Per-card Edit affordance on the grid */
+.card .edit-link { display:block; padding:0 12px 10px; font-size:12px; color:var(--faint); text-decoration:none; }
+.card .edit-link:hover { color:var(--fg); text-decoration:underline; }
