@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -59,6 +60,16 @@ func TestUploadAcceptsEpub(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	// The import page's async upload relies on a JSON {"queued": <name>} reply
+	// (NOT a redirect) so it can stay put and add an optimistic row keyed by the
+	// staged filename. Pin that contract.
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v; body=%s", err, rec.Body.String())
+	}
+	if resp["queued"] != "MyBook.epub" {
+		t.Errorf(`queued = %q, want "MyBook.epub"`, resp["queued"])
 	}
 	// File should have landed in the import dir, named from the upload.
 	if _, err := os.Stat(filepath.Join(imp, "MyBook.epub")); err != nil {

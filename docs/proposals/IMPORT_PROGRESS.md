@@ -117,9 +117,14 @@ POST /api/upload              (existing) returns {"queued": <filename>}
 
 Note: `POST /api/upload` cannot return a job *id*: the job is created later by
 the watcher when it picks the file up (async), not by the upload handler. The
-file-to-job correlation key is therefore the **filename** (which upload already
-returns). The UI keys job rows by name to highlight a just-uploaded file once its
-job appears via SSE. (Revised from "return the job id".)
+file-to-job correlation key is therefore the **filename** (which upload returns
+as `{"queued": <staged-name>}`). The import page uploads via `fetch` with
+`Accept: application/json` so it never navigates away, then immediately shows an
+optimistic "queued" placeholder row keyed by that staged name. When the real job
+arrives over SSE, the client adopts the placeholder element as the job's
+id-keyed row (matched by filename), so there is no flicker and no duplicate. The
+plain-form redirect path still exists for non-JS clients. (Revised from "return
+the job id"; the dedicated page is async, not a form-post redirect.)
 
 ### SSE specifics
 

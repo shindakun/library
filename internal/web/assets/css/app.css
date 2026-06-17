@@ -102,3 +102,10 @@ html.reader, body.reader { height:100%; margin:0; }
 .job progress::-webkit-progress-bar { background:var(--cover-bg); border-radius:999px; }
 .job progress::-webkit-progress-value { background:var(--accent); border-radius:999px; }
 .job progress::-moz-progress-bar { background:var(--accent); border-radius:999px; }
+
+/* Import page: async upload feedback + optimistic queued row. */
+.upload-note { margin:12px 0 0; font-size:13px; color:var(--muted); }
+.upload-note.error { color:#c0392b; }
+.imports-wrap .upload-note { margin:0 0 16px; }
+.job.pending { opacity:.85; }
+.job.pending .job-step { font-style:italic; }

@@ -4,14 +4,20 @@
 // Map<id, rowElement> and upsert by id: known id -> update that row in place,
 // new id -> append a row. The server sends a snapshot burst on connect, so a
 // late-joining page is immediately correct, then streams deltas.
+//
+// Uploads are async (no navigation). The server queues the file but the job is
+// created later, by the watcher, so we show an immediate optimistic "queued"
+// placeholder row keyed by filename and reconcile it with the real job the
+// first time an SSE event for that filename arrives.
 
 (function () {
   const list = document.getElementById("job-list");
   const empty = document.getElementById("job-empty");
-  const rows = new Map(); // id -> <li>
+  const rows = new Map(); // job id -> <li>
+  const pending = new Map(); // filename -> placeholder <li> awaiting its real job
 
   function syncEmpty() {
-    empty.style.display = rows.size ? "none" : "";
+    empty.style.display = rows.size || pending.size ? "none" : "";
   }
 
   // Newest jobs on top. startedAt is an RFC3339 string; compare lexically
@@ -98,14 +104,49 @@
     if (!job || !job.id) return;
     let li = rows.get(job.id);
     if (!li) {
-      li = document.createElement("li");
+      // First time we see this job id. If we have an optimistic placeholder for
+      // its filename, adopt that element so the row doesn't flicker; otherwise
+      // make a fresh one.
+      li = pending.get(job.name);
+      if (li) pending.delete(job.name);
+      else li = document.createElement("li");
       rows.set(job.id, li);
-      render(li, job);
-      place(li);
-    } else {
-      render(li, job);
-      place(li); // re-sort if startedAt ordering changed (it won't, but cheap)
     }
+    render(li, job);
+    place(li);
+    syncEmpty();
+  }
+
+  // addPending shows an immediate "queued" row for a just-uploaded file, before
+  // the watcher has created its job. Reconciled away by upsert() when the real
+  // job arrives over SSE (matched by filename).
+  function addPending(name) {
+    if (pending.has(name)) return;
+    // If the real job already arrived (snapshot burst raced the upload response),
+    // don't add a placeholder that would never reconcile.
+    for (const li of rows.values()) {
+      const nm = li.querySelector(".job-name");
+      if (nm && nm.textContent === name) return;
+    }
+    const li = document.createElement("li");
+    li.className = "job pending";
+    li.dataset.started = "9999"; // sort to the very top until the real job lands
+    const head = document.createElement("div");
+    head.className = "job-head";
+    const nm = document.createElement("span");
+    nm.className = "job-name";
+    nm.textContent = name;
+    const state = document.createElement("span");
+    state.className = "job-state queued";
+    state.textContent = "queued";
+    head.append(nm, state);
+    const line = document.createElement("div");
+    line.className = "job-step";
+    line.textContent = "uploaded, waiting to import…";
+    const bar = document.createElement("progress");
+    li.append(head, line, bar);
+    pending.set(name, li);
+    place(li);
     syncEmpty();
   }
 
@@ -122,7 +163,67 @@
     // each connect, so reconnection self-heals the list. Nothing to do here.
   }
 
+  // Intercept the upload form so a submit does NOT navigate away: post via
+  // fetch (Accept: application/json -> the server returns {"queued"} instead of
+  // a redirect) and let the new job appear in the live list via SSE. This is
+  // the whole point of the dedicated page: stay put and watch progress.
+  function wireUpload() {
+    const form = document.getElementById("upload-form");
+    if (!form) return;
+    const input = form.querySelector('input[type="file"]');
+    const btn = form.querySelector('button[type="submit"]');
+    let note = document.getElementById("upload-note");
+    if (!note) {
+      note = document.createElement("p");
+      note.id = "upload-note";
+      note.className = "upload-note";
+      note.style.display = "none";
+      form.insertAdjacentElement("afterend", note);
+    }
+    function say(msg, isError) {
+      note.textContent = msg;
+      note.classList.toggle("error", !!isError);
+      note.style.display = msg ? "" : "none";
+    }
+
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      if (!input || !input.files || !input.files.length) return;
+      const body = new FormData(form);
+      if (btn) btn.disabled = true;
+      say("Uploading " + input.files[0].name + "…", false);
+
+      fetch(form.action, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: body,
+      })
+        .then(function (resp) {
+          if (!resp.ok) {
+            return resp.text().then(function (t) {
+              throw new Error(t.trim() || "upload failed (" + resp.status + ")");
+            });
+          }
+          return resp.json();
+        })
+        .then(function (data) {
+          // The server may have sanitized the filename; key the optimistic row
+          // on what it actually staged, so SSE reconciliation matches by name.
+          say("", false);
+          addPending(data.queued || input.files[0].name);
+          form.reset();
+        })
+        .catch(function (err) {
+          say(err.message || "Upload failed.", true);
+        })
+        .finally(function () {
+          if (btn) btn.disabled = false;
+        });
+    });
+  }
+
   syncEmpty();
+  wireUpload();
   if (window.EventSource) {
     connect();
   } else {
