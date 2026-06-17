@@ -356,23 +356,109 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 	now := time.Now().Unix()
 
 	var id int64
+	// Old FTS terms for an existing rowid, needed to delete from the contentless
+	// FTS index before re-inserting (see ftsReplace). Empty for a new row.
+	var oldFTSTitle, oldFTSAuthors, oldFTSDesc string
 	if existingID != 0 {
+		// A rescan of an existing book must not clobber fields the user edited.
+		// Load the row's edited_fields and, for each one, keep the DB's current
+		// value instead of overwriting it from the file (scalars below, joins via
+		// the skip flags further down).
+		var editedJSON string
+		var curTitle, curSortTitle, curLanguage, curPublisher, curDescription, curPublished string
+		_ = tx.QueryRowContext(ctx,
+			`SELECT edited_fields, title, sort_title, language, publisher, description, published FROM books WHERE id=?`, existingID).
+			Scan(&editedJSON, &curTitle, &curSortTitle, &curLanguage, &curPublisher, &curDescription, &curPublished)
+		ed := editedSet(editedJSON)
+
+		{
+			rows, _ := tx.QueryContext(ctx, `SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id=a.id WHERE ba.book_id=?`, existingID)
+			var names []string
+			for rows != nil && rows.Next() {
+				var n string
+				_ = rows.Scan(&n)
+				names = append(names, n)
+			}
+			if rows != nil {
+				_ = rows.Close()
+			}
+			oldFTSAuthors = strings.Join(names, " ")
+		}
+		oldFTSTitle, oldFTSDesc = curTitle, curDescription
+
+		keep := func(field, fileVal, dbVal string) string {
+			if ed[field] {
+				return dbVal
+			}
+			return fileVal
+		}
+		title := keep(fieldTitle, meta.Title, curTitle)
+		// sort_title tracks title unless explicitly edited.
+		st := sortTitle
+		if ed[fieldSortTitle] {
+			st = curSortTitle
+		} else if ed[fieldTitle] {
+			st = sortKey(curTitle)
+		}
+
 		_, err := tx.ExecContext(ctx, `
 			UPDATE books SET title=?, sort_title=?, language=?, publisher=?,
 			    description=?, published=?, file_size=?, file_hash=?,
 			    has_cover=?, source=?, format=? WHERE id=?`,
-			meta.Title, sortTitle, meta.Language, meta.Publisher,
-			meta.Description, meta.Published, size, hash,
-			meta.HasCover, source, format, existingID)
+			title, st,
+			keep(fieldLanguage, meta.Language, curLanguage),
+			keep(fieldPublisher, meta.Publisher, curPublisher),
+			keep(fieldDescription, meta.Description, curDescription),
+			keep(fieldPublished, meta.Published, curPublished),
+			size, hash, meta.HasCover, source, format, existingID)
 		if err != nil {
 			return 0, err
 		}
 		id = existingID
-		// Clear join rows; we re-insert below.
-		for _, t := range []string{"book_authors", "book_series", "book_tags", "identifiers"} {
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE book_id=?", t), id); err != nil {
+		// Reflect the kept scalars back into meta so the FTS refresh below uses
+		// the surviving (edited) values, not the file's.
+		meta.Title, meta.Language, meta.Publisher, meta.Description, meta.Published = title, keep(fieldLanguage, meta.Language, curLanguage), keep(fieldPublisher, meta.Publisher, curPublisher), keep(fieldDescription, meta.Description, curDescription), keep(fieldPublished, meta.Published, curPublished)
+
+		// Clear and re-insert join rows ONLY for fields the user has not edited.
+		// An edited join (authors/series/tags/identifiers) is left as-is in the DB.
+		joinFor := map[string]string{
+			fieldAuthors:     "book_authors",
+			fieldSeries:      "book_series",
+			fieldTags:        "book_tags",
+			fieldIdentifiers: "identifiers",
+		}
+		for field, table := range joinFor {
+			if ed[field] {
+				continue // user edited it; keep the DB rows
+			}
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE book_id=?", table), id); err != nil {
 				return 0, err
 			}
+		}
+		// Below, the file-derived authors/series/identifiers are re-inserted; skip
+		// the ones the user edited so we don't duplicate or override them.
+		if ed[fieldAuthors] {
+			meta.Authors = nil
+		}
+		if ed[fieldSeries] {
+			meta.Series = ""
+		}
+		if ed[fieldIdentifiers] {
+			meta.Identifiers = nil
+		}
+		// FTS: if authors were edited, reload them for the index refresh.
+		if ed[fieldAuthors] {
+			rows, _ := tx.QueryContext(ctx, `SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id=a.id WHERE ba.book_id=?`, id)
+			var kept []string
+			for rows != nil && rows.Next() {
+				var n string
+				_ = rows.Scan(&n)
+				kept = append(kept, n)
+			}
+			if rows != nil {
+				_ = rows.Close()
+			}
+			meta.Authors = kept
 		}
 	} else {
 		res, err := tx.ExecContext(ctx, `
@@ -412,11 +498,18 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 		}
 	}
 
-	// Refresh the FTS row.
-	_, _ = tx.ExecContext(ctx, `DELETE FROM books_fts WHERE rowid=?`, id)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO books_fts (rowid, title, authors, description) VALUES (?,?,?,?)`,
-		id, meta.Title, strings.Join(meta.Authors, " "), meta.Description); err != nil {
-		return 0, err
+	// Refresh the FTS row. For an existing rowid the old terms must be removed
+	// from the contentless index first (ftsReplace); a brand-new row just inserts.
+	newAuthorsJoined := strings.Join(meta.Authors, " ")
+	if existingID != 0 {
+		if err := ftsReplace(ctx, tx, id, oldFTSTitle, oldFTSAuthors, oldFTSDesc, meta.Title, newAuthorsJoined, meta.Description); err != nil {
+			return 0, err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO books_fts (rowid, title, authors, description) VALUES (?,?,?,?)`,
+			id, meta.Title, newAuthorsJoined, meta.Description); err != nil {
+			return 0, err
+		}
 	}
 	return id, nil
 }

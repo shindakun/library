@@ -124,8 +124,31 @@ Implementation notes:
   `upsertBook` does.
 - **Re-sync FTS**: delete + re-insert the `books_fts` row (title/authors/
   description) so search reflects the edit. This is already the pattern at
-  `upsertBook` lines ~199-200.
+  `upsertBook`.
 - Record each changed column name into `edited_fields`.
+
+**Gaps found building step 2 (the clobber surface is wider than "scalar columns"):**
+
+- **Joins are clobbered too.** `upsertBook` DELETEs and re-inserts
+  `book_authors`/`book_series`/`book_tags`/`identifiers` from the file on every
+  update. So edit-protection must cover the join-backed fields (authors, series,
+  tags, identifiers), not just the scalar `books` columns. Track them in
+  `edited_fields` by a stable field name (`"authors"`, `"series"`, `"tags"`,
+  `"identifiers"`), and have scan skip the DELETE+reinsert for any edited one.
+- **When clobber actually fires:** `Index` early-returns when the file hash is
+  unchanged (no clobber on a no-op rescan). The dangerous path is a rescan where
+  the file *content changed* on a book the user also edited (re-import, external
+  replace). That path must honor `edited_fields`; test it explicitly.
+- **One field set, two consumers.** Define the editable field names as constants
+  used by BOTH `UpdateMetadata` (to record edits) and the scan path (to skip
+  them), so they can't drift.
+- **Sanitize at the boundary.** `UpdateMetadata` trims and bounds every string
+  (length caps, strip control characters), so neither a filename sink (later
+  embed) nor the FTS index ever sees raw/hostile input. The HTTP layer (step 4)
+  sanitizes again at the edge, but the catalog does not trust its caller.
+- **`sort_title`:** if the user edits Title but not SortTitle, derive SortTitle
+  from the new Title (via `sortKey`) and do NOT mark `sort_title` edited, so a
+  later title-only edit keeps re-deriving. An explicit SortTitle edit marks it.
 
 ### Teach scan not to clobber
 
