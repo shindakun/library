@@ -6,6 +6,34 @@ them in the browser, and serve them over OPDS. The import *flow* is unchanged
 (watch, verify, name, move, index, archive); the work is making the catalog and
 reader format-aware.
 
+## 0. Decisions locked (read first)
+
+These were open in earlier drafts; they are now decided and the rest of the doc
+assumes them:
+
+- **CBR strategy:** convert CBR -> CBZ at import, using the **pure-Go
+  `nwaples/rardecode`** module (vendored). Keeps the project's no-cgo /
+  no-external-binary property; no `unrar` in the image. Caveat: rardecode does
+  not handle encrypted or some exotic RAR variants; such a CBR fails the import
+  with a clear error (and lands in `import/failed/`), which is acceptable.
+- **Build scope:** **CBZ end-to-end first** (schema -> `internal/comic` ->
+  import -> reader -> OPDS), all working and verifiable, THEN add CBR conversion
+  on top. CBR is the only hard part; de-risk everything else first.
+- **Branch:** built on a fresh `comics` cut from `main` AFTER the import-progress
+  feature (v0.2.0) landed, so the CBR conversion step reports real progress.
+
+### What v0.2.0 already gives us (do not rebuild)
+
+The import-progress feature shipped the generic progress plumbing this proposal's
+CBR step needs. `internal/ingest` already has
+`type progressFunc func(step string, frac float64, detail string)`, `pipeline()`
+takes an `onProgress progressFunc`, and `handle()` wires it to the job registry
+-> SSE -> the `<progress>` bar on `/imports`. A CBR converter does NOT add any
+progress machinery; it just calls
+`onProgress("converting", pagesDone/float64(total), "page 142/610")` inside its
+extract loop and the bar fills end to end. This is exactly why import-progress
+was built first.
+
 ## 1. What a comic is, and the one real wrinkle
 
 A comic archive is just **a folder of page images** (JPEG/PNG/WebP), one per
@@ -92,21 +120,26 @@ Page ordering: sort entry names with a natural/numeric-aware comparison
 `ComicInfo.xml` and directories. This is the one fiddly bit; get it right and
 test it (zero-padded vs not, nested folders).
 
-### 4.2 The CBR question (decide here)
+### 4.2 The CBR question (DECIDED: convert on import, pure-Go rardecode)
+
+Decision recorded in §0. For the record, the options that were weighed:
 
 | Option | How | Trade-off |
 | --- | --- | --- |
-| **Convert to CBZ on import (RECOMMENDED)** | At import, detect CBR, extract with a RAR lib / `unrar`, re-zip to CBZ, keep only the CBZ | Rest of the system only ever sees ZIPs; one-time cost at import; needs a RAR extractor available during import |
-| Read CBR live | Add a Go RAR module (e.g. `nwaples/rardecode`) and a `comic` reader that handles both | No conversion, but every read path (cover, pages) must handle RAR; pulls a dependency into the otherwise-stdlib reader |
-| Reject CBR | Only accept CBZ; document converting CBR externally | Zero work, zero deps; pushes the burden to the user |
+| **Convert to CBZ on import (CHOSEN)** | At import, detect CBR, extract with `nwaples/rardecode` (pure Go), re-zip to CBZ, keep only the CBZ | Rest of the system only ever sees ZIPs; one-time cost at import; no external binary; fails clearly on encrypted/exotic RAR |
+| Read CBR live | A `comic` reader that handles RAR on every read | No conversion, but cover/page paths all handle RAR; reader stops being pure-ZIP |
+| Reject CBR | Only accept CBZ | Zero work, pushes converting onto the user |
 
-Recommendation: **convert on import**. It confines RAR to one spot (the import
-step), keeps the catalog/reader/cover/OPDS paths pure-ZIP, and matches the
-"normalize at the boundary" pattern the DRM pipeline already uses (fulfill +
-decrypt produce a clean artifact; CBR->CBZ produces a clean artifact). The RAR
-extractor can be a vendored Go module or a `unrar` binary in the image; since
-comics have no DRM, this does **not** need the Python sidecar. Note in a log
-line if a CBR is converted, and keep the original out of the library.
+Why convert-on-import with `rardecode`: it confines RAR to one spot (the import
+step), keeps the catalog/reader/cover/OPDS paths pure-ZIP, stays pure-Go (no cgo,
+no `unrar` binary, no image bloat), and matches the "normalize at the boundary"
+pattern the DRM pipeline already uses (fulfill + decrypt produce a clean
+artifact; CBR->CBZ produces a clean artifact). Comics have no DRM, so this does
+**not** touch the Python sidecar. The conversion runs inside `pipeline()` and
+reports progress via the existing `onProgress("converting", done/total, ...)`
+hook (§0). Keep the original CBR out of the library; archive it to `done/` like
+any other source. A CBR `rardecode` cannot read (encrypted/exotic) fails the
+import with a clear error and lands in `import/failed/`.
 
 ## 5. Import flow (what changes, what does not)
 
@@ -171,19 +204,31 @@ slow. Keep it a derived cache (safe to wipe), consistent with `data/covers`.
 
 ## 9. Build order
 
+**CBZ end-to-end first (steps 1-5), then CBR (step 6).** Each step is
+independently verifiable; CBR is isolated last because it is the only hard part.
+
 1. Schema `format` column + `Book.Format`; backfill existing rows to `epub` by
-   extension on scan. Teach `Index` to branch on format (epub vs cbz).
+   extension on scan. Teach `Index` to branch on format (epub vs cbz). The
+   on-disk layout becomes `Author/Title.<ext>` (extend `fileutil.LibraryRelPath`
+   to take the extension).
 2. `internal/comic`: `Read`, `Pages`, `PageImage`, `CoverImage` for CBZ. Unit
    tests with synthetic CBZ fixtures (a zip of tiny images + a ComicInfo.xml
-   case and a filename-only case). Nail the page-ordering sort.
-3. Import: `importable()` accepts `.cbz`; the pipeline imports it through the
-   shared tail. Verify end to end (drop a CBZ, see it in the catalog with a
-   cover).
-4. Reader: format-based template selection + the comic viewer endpoints +
-   `comic.js`. (Browser-verified by you; JS is checked statically.)
-5. OPDS: emit the comic media type for cbz entries.
-6. CBR: implement the chosen strategy (convert-on-import). Verify with a real
-   CBR.
+   case and a filename-only case). Nail the page-ordering sort (natural/numeric,
+   zero-padded vs not, nested dirs, skip non-image + `ComicInfo.xml`).
+3. Import: `importable()` accepts `.cbz`; the pipeline routes a `.cbz` through a
+   no-DRM branch into the shared tail (verify -> dedup -> name -> move -> index
+   -> archive). Verify end to end (drop a CBZ, see it in the catalog with a
+   cover). No sidecar.
+4. Reader: format-based template selection at `/read/{slug}` + the comic viewer
+   endpoints (`/book/{slug}/pages`, `/book/{slug}/page/{n}`) + `comic.js`.
+   (Browser-verified by you; JS is checked statically.)
+5. OPDS: emit `application/vnd.comicbook+zip` for cbz entries.
+6. CBR: add `.cbr` to `importable()`; convert CBR -> CBZ inside `pipeline()`
+   using `nwaples/rardecode`, reporting progress through the existing
+   `onProgress("converting", done/total, ...)` hook so the `/imports` bar fills.
+   The converted CBZ flows through the same tail as a native CBZ. Verify with a
+   real CBR (watch the progress bar). Confirm an encrypted/unreadable CBR fails
+   cleanly into `import/failed/`.
 7. (Optional) per-comic page cache if reading is slow.
 
 ## 10. Risks / notes
