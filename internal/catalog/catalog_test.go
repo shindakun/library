@@ -188,6 +188,56 @@ func makeEPUB(t *testing.T, libraryDir, file, title, author string) string {
 	return p
 }
 
+// makeCBZ writes a minimal valid comic archive (ComicInfo.xml + one image page).
+func makeCBZ(t *testing.T, libraryDir, file, title string) string {
+	t.Helper()
+	p := filepath.Join(libraryDir, file)
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	zw := zip.NewWriter(f)
+	ci, _ := zw.Create("ComicInfo.xml")
+	_, _ = ci.Write([]byte("<ComicInfo><Title>" + title + "</Title></ComicInfo>"))
+	pg, _ := zw.Create("page01.png")
+	_, _ = pg.Write([]byte("image-bytes"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestScanIndexesComics pins that a rescan picks up CBZ files, not just epubs:
+// importing calls Index directly, but a clean-db rescan (or a CBZ dropped into
+// the library) must still catalog comics.
+func TestScanIndexesComics(t *testing.T) {
+	c, books := newTestCatalog(t)
+	makeEPUB(t, books, "a.epub", "Alpha", "Author One")
+	makeCBZ(t, books, "comic.cbz", "A Comic")
+
+	n, err := c.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("scan indexed %d, want 2 (epub + cbz)", n)
+	}
+	got, _ := c.List(context.Background(), ListOptions{})
+	var foundComic bool
+	for _, b := range got {
+		if b.Format == "cbz" {
+			foundComic = true
+			if b.Title != "A Comic" {
+				t.Errorf("comic title = %q, want A Comic", b.Title)
+			}
+		}
+	}
+	if !foundComic {
+		t.Error("scan did not index the CBZ as a comic")
+	}
+}
+
 func TestScanIndexesBooks(t *testing.T) {
 	c, books := newTestCatalog(t)
 	makeEPUB(t, books, "a.epub", "Alpha", "Author One")

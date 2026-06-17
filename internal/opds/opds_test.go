@@ -190,6 +190,55 @@ func TestAcquisitionEntryShape(t *testing.T) {
 	}
 }
 
+// writeMinCBZ writes a minimal valid CBZ (a ComicInfo.xml + one image page) so
+// the catalog indexes it as a comic.
+func writeMinCBZ(t *testing.T, dir, file, title string) {
+	t.Helper()
+	f, err := os.Create(filepath.Join(dir, file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	zw := zip.NewWriter(f)
+	ci, _ := zw.Create("ComicInfo.xml")
+	_, _ = ci.Write([]byte("<ComicInfo><Title>" + title + "</Title></ComicInfo>"))
+	pg, _ := zw.Create("page01.png")
+	_, _ = pg.Write([]byte("not-a-real-png-but-an-image-named-entry"))
+	_ = zw.Close()
+}
+
+// TestComicAcquisitionType verifies a CBZ book advertises the comic media type
+// on its acquisition link, so comic-aware OPDS clients recognize it.
+func TestComicAcquisitionType(t *testing.T) {
+	dir := t.TempDir()
+	books := filepath.Join(dir, "library")
+	_ = os.MkdirAll(books, 0o755)
+	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), books, filepath.Join(dir, "covers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cat.Close() })
+	writeMinCBZ(t, books, "comic.cbz", "A Comic")
+	if _, err := cat.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{Cat: cat, BaseURL: "http://test.local"}
+
+	_, f := do(t, h, "/opds/all")
+	if len(f.Entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(f.Entries))
+	}
+	var got string
+	for _, l := range f.Entries[0].Links {
+		if l.Rel == relAcq {
+			got = l.Type
+		}
+	}
+	if got != typeComic {
+		t.Errorf("comic acquisition type = %q, want %q", got, typeComic)
+	}
+}
+
 func TestSearchFeedIsPaged(t *testing.T) {
 	h := newHandler(t, 40) // all titles contain "Book", so search matches all
 	_, f := do(t, h, "/opds/search?q=Book")

@@ -177,6 +177,18 @@ func formatForPath(path string) string {
 	}
 }
 
+// indexableExt reports whether a library file is one Scan should index: an epub
+// or a comic archive. CBR is not listed: it is converted to CBZ at import, so a
+// raw .cbr never sits in the library.
+func indexableExt(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".epub", ".cbz":
+		return true
+	default:
+		return false
+	}
+}
+
 // coverExt maps a cover mime type to a file extension.
 func coverExt(mime string) string {
 	switch mime {
@@ -390,7 +402,7 @@ func (c *Catalog) Scan(ctx context.Context) (int, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(p), ".epub") {
+		if d.IsDir() || !indexableExt(p) {
 			return nil
 		}
 		if _, err := c.Index(ctx, p, "scan"); err != nil {

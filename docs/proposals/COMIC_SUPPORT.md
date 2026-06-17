@@ -295,7 +295,15 @@ independently verifiable; CBR is isolated last because it is the only hard part.
    path is format-neutral. Verified: comic template renders (not epub), `/pages`
    count, `/page/{n}` bytes + mime, out-of-range 404, comic download media type.
    Browser behavior (paging, fit, resume) is for the user to confirm.
-5. OPDS: emit `application/vnd.comicbook+zip` for cbz entries.
+5. (DONE) OPDS: `bookEntry` emits `application/vnd.comicbook+zip` on the
+   acquisition link for cbz (via `acquisitionType(format)`), so comic-aware
+   clients recognize it. GAP found here (not in earlier drafts): `catalog.Scan`
+   filtered to `.epub` ONLY, so a rescan (or a CBZ dropped straight into the
+   library) never cataloged comics, even though the import path indexed them via
+   `Index` directly. The lesson: a "single funnel" (`Index`) can still be gated
+   by each caller's own pre-filter; check the callers, not just the funnel. Fixed
+   with a shared `indexableExt` (epub + cbz). Tests: comic acquisition type;
+   `TestScanIndexesComics`.
 6. CBR: add `.cbr` to `importable()`; convert CBR -> CBZ inside `pipeline()`
    using `nwaples/rardecode`, reporting progress through the existing
    `onProgress("converting", done/total, ...)` hook so the `/imports` bar fills.

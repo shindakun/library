@@ -57,6 +57,7 @@ const (
 	typeNavFeed  = "application/atom+xml;profile=opds-catalog;kind=navigation"
 	typeAcqFeed  = "application/atom+xml;profile=opds-catalog;kind=acquisition"
 	typeEpub     = "application/epub+zip"
+	typeComic    = "application/vnd.comicbook+zip"
 	relSelf      = "self"
 	relStart     = "start"
 	relNext      = "next"
@@ -190,8 +191,10 @@ func (h *Handler) bookEntry(b *catalog.Book) entry {
 		Title:   b.Title,
 		Updated: now(),
 		Links: []link{
-			// The acquisition link: this is what the OPDS client downloads.
-			{Rel: relAcq, Href: h.abs("/book/" + slug + "/file"), Type: typeEpub},
+			// The acquisition link: this is what the OPDS client downloads. The
+			// media type must match the format so comic-aware clients recognize a
+			// CBZ (and don't try to open it as an epub).
+			{Rel: relAcq, Href: h.abs("/book/" + slug + "/file"), Type: acquisitionType(b.Format)},
 		},
 	}
 	for _, a := range b.Authors {
@@ -207,6 +210,15 @@ func (h *Handler) bookEntry(b *catalog.Book) entry {
 		)
 	}
 	return e
+}
+
+// acquisitionType maps a book's storage format to its OPDS acquisition media
+// type. Defaults to epub for any unknown format, matching the catalog default.
+func acquisitionType(format string) string {
+	if format == "cbz" {
+		return typeComic
+	}
+	return typeEpub
 }
 
 // openSearchDesc advertises the search endpoint per the OpenSearch spec, which
