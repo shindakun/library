@@ -65,6 +65,15 @@ Everything else (the fsnotify+poll watcher, dedup by content hash, the
 `Author/Title.ext` layout, slug-as-content-hash, the cover cache, OPDS paging,
 the archive-to-done disposition) carries over unchanged.
 
+**Metadata-shape gap:** `Index` -> `upsertBook` is typed directly to
+`*epub.Metadata` (and `books_fts` + the author/series/identifier joins read its
+fields). `comic.Read` returns a different struct. Rather than thread two types
+through, define `comic.Metadata` with the **same field names** the catalog reads
+(Title, Authors, Series, SeriesIndex, Language, Publisher, Description,
+Published, HasCover, Identifiers) so a thin adapter maps it onto the existing
+`upsertBook` path with no signature churn. Comics simply leave the epub-only
+fields (Publisher, Identifiers, Description) empty.
+
 ## 3. Schema + model changes
 
 ```sql
@@ -73,10 +82,31 @@ the archive-to-done disposition) carries over unchanged.
 ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'epub';
 ```
 
-`Book` gains a `Format string` field. The on-disk layout becomes
-`Author/Title.<ext>` where ext is `.epub` or `.cbz` (the existing
-`fileutil.LibraryRelPath` already takes the title; extend it to take the
-extension, or store the source extension). The **slug stays the content hash**,
+**Migration gap (found while building, not in the original draft):** `migrate()`
+today is a single `db.Exec(schema)` where `schema` is all
+`CREATE TABLE IF NOT EXISTS`, i.e. idempotent. A bare `ALTER TABLE ... ADD
+COLUMN` is **not** idempotent: it errors with "duplicate column" on every run
+after the first and would break startup. So:
+
+- Fresh DBs: add `format TEXT NOT NULL DEFAULT 'epub'` directly in the `books`
+  `CREATE TABLE` (covers new installs with no ALTER).
+- Existing DBs: guard the `ALTER` by checking `PRAGMA table_info(books)` for the
+  column first, and only `ALTER` when absent. This is the project's first real
+  schema migration; keep it a tiny helper (`addColumnIfMissing`) rather than
+  pulling in a migration framework.
+
+Existing rows default to `epub`, which is correct (everything imported so far is
+an epub), so no data backfill pass is needed beyond the column default.
+
+`Book` gains a `Format string` field. Touch points for that field are wider than
+"Index branches": the explicit `SELECT ... FROM books` hydrate list and its
+`Scan`, the `INSERT` and `UPDATE` in `upsertBook`, the `file` download handler
+(Content-Type + filename extension), and the OPDS `bookEntry` acquisition type
+all read or write format and must be updated together (§5-§7).
+
+The on-disk layout becomes `Author/Title.<ext>` where ext is `.epub` or `.cbz`
+(`fileutil.LibraryRelPath` hardcodes `.epub` today; extend it to take the
+extension). The **slug stays the content hash**,
 so comic URLs are stable like book URLs, and dedup-by-hash works as-is.
 
 ## 4. The comic package (`internal/comic`)

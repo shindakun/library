@@ -40,6 +40,7 @@ type Book struct {
 	HasCover    bool
 	AddedAt     time.Time
 	Source      string
+	Format      string // "epub" | "cbz"; how to parse/serve this book
 	Identifiers map[string]string
 }
 
@@ -129,6 +130,18 @@ func (c *Catalog) cacheCover(absPath, slug string) {
 	_ = os.WriteFile(dst, data, 0o644)
 }
 
+// formatForPath classifies a library file by extension into the catalog's
+// format discriminator. Defaults to "epub" for anything not a recognized comic
+// extension, so existing rows and unknown files behave as before.
+func formatForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".cbz", ".cbr":
+		return "cbz" // CBR is converted to CBZ at import; stored as cbz
+	default:
+		return "epub"
+	}
+}
+
 // coverExt maps a cover mime type to a file extension.
 func coverExt(mime string) string {
 	switch mime {
@@ -146,7 +159,46 @@ func coverExt(mime string) string {
 func (c *Catalog) Close() error { return c.db.Close() }
 
 func (c *Catalog) migrate() error {
-	_, err := c.db.Exec(schema)
+	if _, err := c.db.Exec(schema); err != nil {
+		return err
+	}
+	// Schema additions for DBs created before a column existed. The CREATE TABLE
+	// above is idempotent (IF NOT EXISTS) and already carries every column for a
+	// fresh DB; these ALTERs only fire on an older DB missing the column. A bare
+	// ALTER ... ADD COLUMN is not idempotent (errors "duplicate column"), so each
+	// is guarded by a table_info check.
+	if err := c.addColumnIfMissing("books", "format", "TEXT NOT NULL DEFAULT 'epub'"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing adds a column to a table only if it is not already present,
+// making the migration safe to run on every startup. def is the column type plus
+// any default/constraint (e.g. "TEXT NOT NULL DEFAULT 'epub'").
+func (c *Catalog) addColumnIfMissing(table, column, def string) error {
+	rows, err := c.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		// PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk.
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = c.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, def))
 	return err
 }
 
@@ -191,7 +243,7 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	id, err := upsertBook(ctx, tx, rel, hash, info.Size(), source, meta, existingID)
+	id, err := upsertBook(ctx, tx, rel, hash, info.Size(), source, formatForPath(absPath), meta, existingID)
 	if err != nil {
 		return 0, err
 	}
@@ -210,7 +262,7 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 	return id, nil
 }
 
-func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, source string, meta *epub.Metadata, existingID int64) (int64, error) {
+func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, source, format string, meta *epub.Metadata, existingID int64) (int64, error) {
 	sortTitle := sortKey(meta.Title)
 	now := time.Now().Unix()
 
@@ -219,10 +271,10 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 		_, err := tx.ExecContext(ctx, `
 			UPDATE books SET title=?, sort_title=?, language=?, publisher=?,
 			    description=?, published=?, file_size=?, file_hash=?,
-			    has_cover=?, source=? WHERE id=?`,
+			    has_cover=?, source=?, format=? WHERE id=?`,
 			meta.Title, sortTitle, meta.Language, meta.Publisher,
 			meta.Description, meta.Published, size, hash,
-			meta.HasCover, source, existingID)
+			meta.HasCover, source, format, existingID)
 		if err != nil {
 			return 0, err
 		}
@@ -236,11 +288,11 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 	} else {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO books (title, sort_title, path, file_size, file_hash,
-			    language, publisher, description, published, has_cover, added_at, source)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			    language, publisher, description, published, has_cover, added_at, source, format)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			meta.Title, sortTitle, rel, size, hash,
 			meta.Language, meta.Publisher, meta.Description, meta.Published,
-			meta.HasCover, now, source)
+			meta.HasCover, now, source, format)
 		if err != nil {
 			return 0, err
 		}
@@ -545,10 +597,10 @@ func (c *Catalog) loadBooks(ctx context.Context, ids []int64) ([]*Book, error) {
 		var added int64
 		err := c.db.QueryRowContext(ctx, `
 			SELECT id, title, sort_title, language, publisher, description,
-			       published, path, file_size, file_hash, has_cover, added_at, source
+			       published, path, file_size, file_hash, has_cover, added_at, source, format
 			FROM books WHERE id=?`, id).Scan(
 			&b.ID, &b.Title, &b.SortTitle, &b.Language, &b.Publisher, &b.Description,
-			&b.Published, &b.Path, &b.FileSize, &b.FileHash, &b.HasCover, &added, &b.Source)
+			&b.Published, &b.Path, &b.FileSize, &b.FileHash, &b.HasCover, &added, &b.Source, &b.Format)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

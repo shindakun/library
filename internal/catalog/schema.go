@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS books (
   published   TEXT,
   has_cover   INTEGER NOT NULL DEFAULT 0,
   added_at    INTEGER NOT NULL,
-  source      TEXT
+  source      TEXT,
+  format      TEXT NOT NULL DEFAULT 'epub'
 );
 
 CREATE TABLE IF NOT EXISTS authors (id INTEGER PRIMARY KEY, name TEXT UNIQUE);

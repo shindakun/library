@@ -26,6 +26,54 @@ func newTestCatalog(t *testing.T) (*Catalog, string) {
 	return c, books
 }
 
+// TestMigrateAddsFormatColumnToOldDB verifies the format migration against a
+// real pre-format database: an old books table with no `format` column and a
+// row in it. migrate() must add the column (defaulting existing rows to "epub")
+// and must be safe to run again (idempotent), since it runs on every Open.
+func TestMigrateAddsFormatColumnToOldDB(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "old.db")
+
+	// Stand up an OLD-shape DB by hand: books WITHOUT the format column, one row.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE books (
+		id INTEGER PRIMARY KEY, title TEXT NOT NULL, sort_title TEXT,
+		path TEXT NOT NULL UNIQUE, file_size INTEGER, file_hash TEXT,
+		language TEXT, publisher TEXT, description TEXT, published TEXT,
+		has_cover INTEGER NOT NULL DEFAULT 0, added_at INTEGER NOT NULL, source TEXT);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO books (title, path, added_at) VALUES ('Old Book','a/b.epub',1)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	// Open runs migrate(): the guarded ALTER must add format and default to epub.
+	c, err := Open(dbPath, filepath.Join(dir, "books"), "")
+	if err != nil {
+		t.Fatalf("open/migrate old DB: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+
+	var format string
+	if err := c.db.QueryRow(`SELECT format FROM books WHERE path='a/b.epub'`).Scan(&format); err != nil {
+		t.Fatalf("format column not queryable after migrate: %v", err)
+	}
+	if format != "epub" {
+		t.Errorf("backfilled format = %q, want epub", format)
+	}
+
+	// Idempotent: running migrate again (as the next startup would) must not error
+	// with a duplicate-column failure.
+	if err := c.migrate(); err != nil {
+		t.Errorf("second migrate() failed (not idempotent): %v", err)
+	}
+}
+
 // makeEPUBWithCover writes an EPUB whose manifest declares a cover image, plus
 // the image bytes, so cover extraction has something to find.
 func makeEPUBWithCover(t *testing.T, libraryDir, file, title string, img []byte) string {
@@ -155,6 +203,12 @@ func TestScanIndexesBooks(t *testing.T) {
 	got, _ := c.List(context.Background(), ListOptions{})
 	if len(got) != 2 {
 		t.Fatalf("list returned %d books, want 2", len(got))
+	}
+	// Format threads through Index -> upsert -> Scan: epubs classify as "epub".
+	for _, b := range got {
+		if b.Format != "epub" {
+			t.Errorf("book %q format = %q, want epub", b.Title, b.Format)
+		}
 	}
 }
 
