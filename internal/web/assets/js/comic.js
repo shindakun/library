@@ -22,6 +22,9 @@
   function show(n) {
     if (count > 0) n = Math.max(0, Math.min(n, count - 1));
     page = n;
+    // Hide the img until the new page paints, so no broken-image icon shows
+    // during the swap; the load handler reveals it.
+    img.classList.remove("loaded");
     img.src = pageURL(page);
     img.scrollIntoView({ block: "start" });
     viewer.scrollTop = 0;
@@ -88,6 +91,10 @@
     const x = e.clientX - viewer.getBoundingClientRect().left;
     if (x < viewer.clientWidth * 0.33) window.readerPrev();
     else if (x > viewer.clientWidth * 0.66) window.readerNext();
+  });
+
+  img.addEventListener("load", function () {
+    img.classList.add("loaded");
   });
 
   img.addEventListener("error", function () {

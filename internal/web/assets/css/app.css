@@ -112,6 +112,9 @@ html.reader, body.reader { height:100%; margin:0; }
 /* --- Comic reader (image-sequence viewer) --- */
 .comic-viewer { height:calc(100% - 44px); overflow:auto; background:var(--bg); display:flex; justify-content:center; align-items:flex-start; }
 #comic-page { display:block; margin:0 auto; background:var(--cover-bg); }
+/* Hide the image until a page has actually loaded, so the browser's broken-image
+   icon never flashes before the first page (or between page swaps). */
+#comic-page:not(.loaded) { visibility:hidden; }
 /* Fit width (default): fill the column, scroll vertically for tall pages. */
 body[data-fit="width"] #comic-page { width:100%; max-width:1000px; height:auto; }
 /* Fit height: whole page visible, centered, no scroll. */
