@@ -117,18 +117,11 @@
     syncEmpty();
   }
 
-  // addPending shows an immediate "queued" row for a just-uploaded file, before
-  // the watcher has created its job. Reconciled away by upsert() when the real
-  // job arrives over SSE (matched by filename).
-  function addPending(name) {
-    if (pending.has(name)) return;
-    // If the real job already arrived (snapshot burst raced the upload response),
-    // don't add a placeholder that would never reconcile.
-    for (const li of rows.values()) {
-      const nm = li.querySelector(".job-name");
-      if (nm && nm.textContent === name) return;
-    }
-    const li = document.createElement("li");
+  // renderPending fills a placeholder <li> for a file that has no real job yet
+  // (still uploading, or uploaded and waiting for the watcher). state is one of
+  // "uploading" | "queued" | "failed"; it is rendered in the same shape as a
+  // real job row so the in-progress upload looks exactly like a log row.
+  function renderPending(li, name, state, step, isError) {
     li.className = "job pending";
     li.dataset.started = "9999"; // sort to the very top until the real job lands
     const head = document.createElement("div");
@@ -136,18 +129,45 @@
     const nm = document.createElement("span");
     nm.className = "job-name";
     nm.textContent = name;
-    const state = document.createElement("span");
-    state.className = "job-state queued";
-    state.textContent = "queued";
-    head.append(nm, state);
+    const st = document.createElement("span");
+    st.className = "job-state " + (isError ? "failed" : state);
+    st.textContent = isError ? "failed" : state;
+    head.append(nm, st);
     const line = document.createElement("div");
-    line.className = "job-step";
-    line.textContent = "uploaded, waiting to import…";
-    const bar = document.createElement("progress");
-    li.append(head, line, bar);
-    pending.set(name, li);
-    place(li);
-    syncEmpty();
+    line.className = isError ? "job-error" : "job-step";
+    line.textContent = step;
+    li.replaceChildren(head, line);
+    // No progress bar on a failed row; otherwise an indeterminate one.
+    if (!isError) li.appendChild(document.createElement("progress"));
+  }
+
+  // pendingRow returns the placeholder <li> for name, creating it if needed.
+  // Keyed by name so the upload flow can transition one row through its phases
+  // and so upsert() can later adopt it when the real SSE job arrives.
+  function pendingRow(name) {
+    let li = pending.get(name);
+    if (!li) {
+      // If the real job already arrived (snapshot raced us), reuse nothing.
+      for (const r of rows.values()) {
+        const nm = r.querySelector(".job-name");
+        if (nm && nm.textContent === name) return r;
+      }
+      li = document.createElement("li");
+      pending.set(name, li);
+      place(li);
+      syncEmpty();
+    }
+    return li;
+  }
+
+  // rekeyPending moves a placeholder from one name to another (the server may
+  // sanitize the uploaded filename; the SSE job uses the staged name).
+  function rekeyPending(from, to) {
+    if (from === to) return;
+    const li = pending.get(from);
+    if (!li) return;
+    pending.delete(from);
+    pending.set(to, li);
   }
 
   function connect() {
@@ -165,33 +185,27 @@
 
   // Intercept the upload form so a submit does NOT navigate away: post via
   // fetch (Accept: application/json -> the server returns {"queued"} instead of
-  // a redirect) and let the new job appear in the live list via SSE. This is
-  // the whole point of the dedicated page: stay put and watch progress.
+  // a redirect) and show the file's progress as a row in the same list as the
+  // import logs, from "uploading" through "queued" until the real SSE job
+  // adopts the row. This is the whole point of the dedicated page: stay put and
+  // watch progress, with the upload itself rendered like every other entry.
   function wireUpload() {
     const form = document.getElementById("upload-form");
     if (!form) return;
     const input = form.querySelector('input[type="file"]');
     const btn = form.querySelector('button[type="submit"]');
-    let note = document.getElementById("upload-note");
-    if (!note) {
-      note = document.createElement("p");
-      note.id = "upload-note";
-      note.className = "upload-note";
-      note.style.display = "none";
-      form.insertAdjacentElement("afterend", note);
-    }
-    function say(msg, isError) {
-      note.textContent = msg;
-      note.classList.toggle("error", !!isError);
-      note.style.display = msg ? "" : "none";
-    }
 
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
       if (!input || !input.files || !input.files.length) return;
+      const localName = input.files[0].name;
       const body = new FormData(form);
       if (btn) btn.disabled = true;
-      say("Uploading " + input.files[0].name + "…", false);
+
+      // Show an "uploading" row immediately, keyed by the local filename.
+      const li = pendingRow(localName);
+      renderPending(li, localName, "uploading", "uploading…", false);
+      form.reset();
 
       fetch(form.action, {
         method: "POST",
@@ -207,14 +221,15 @@
           return resp.json();
         })
         .then(function (data) {
-          // The server may have sanitized the filename; key the optimistic row
-          // on what it actually staged, so SSE reconciliation matches by name.
-          say("", false);
-          addPending(data.queued || input.files[0].name);
-          form.reset();
+          // The server may have sanitized the filename; rekey the row to the
+          // staged name so the real SSE job (which uses that name) adopts it.
+          const staged = data.queued || localName;
+          rekeyPending(localName, staged);
+          renderPending(pendingRow(staged), staged, "queued", "uploaded, waiting to import…", false);
         })
         .catch(function (err) {
-          say(err.message || "Upload failed.", true);
+          renderPending(li, localName, "failed", err.message || "upload failed", true);
+          pending.delete(localName); // leave the failed row, but stop reconciling it
         })
         .finally(function () {
           if (btn) btn.disabled = false;

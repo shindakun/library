@@ -12,7 +12,13 @@ import (
 
 func TestImportable(t *testing.T) {
 	yes := []string{"book.acsm", "book.epub", "BOOK.EPUB", "x.AcSm", "a.b.epub", "comic.cbz", "C.CBZ"}
-	no := []string{"book.pdf", "book.txt", "book", "cover.jpg", ".epubx", "epub", "comic.cbr"}
+	no := []string{
+		"book.pdf", "book.txt", "book", "cover.jpg", ".epubx", "epub", "comic.cbr",
+		// Hidden/temp upload stages share an importable extension but must be
+		// skipped so the watcher never grabs a partial file mid-write.
+		".upload-331674232.cbz", ".upload-1.epub",
+		filepath.Join("dir", ".upload-9.cbz"),
+	}
 	for _, n := range yes {
 		if !importable(n) {
 			t.Errorf("importable(%q) = false, want true", n)

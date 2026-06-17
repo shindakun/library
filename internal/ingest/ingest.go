@@ -369,6 +369,13 @@ func uniquePath(p string) string {
 }
 
 func importable(name string) bool {
+	// Skip hidden/temp files: the upload handler stages files as ".upload-*.cbz"
+	// in this same directory before atomically renaming them into place. Those
+	// carry an importable extension, so without this guard the watcher (or the
+	// sweep) would grab a partial temp file mid-write and fail to parse it.
+	if strings.HasPrefix(filepath.Base(name), ".") {
+		return false
+	}
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".acsm", ".epub", ".cbz":
 		return true
