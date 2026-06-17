@@ -108,3 +108,13 @@ html.reader, body.reader { height:100%; margin:0; }
 /* Import page: optimistic upload/queued rows (rendered like real job rows). */
 .job.pending { opacity:.9; }
 .job.pending .job-step { font-style:italic; }
+
+/* --- Comic reader (image-sequence viewer) --- */
+.comic-viewer { height:calc(100% - 44px); overflow:auto; background:var(--bg); display:flex; justify-content:center; align-items:flex-start; }
+#comic-page { display:block; margin:0 auto; background:var(--cover-bg); }
+/* Fit width (default): fill the column, scroll vertically for tall pages. */
+body[data-fit="width"] #comic-page { width:100%; max-width:1000px; height:auto; }
+/* Fit height: whole page visible, centered, no scroll. */
+body[data-fit="height"] .comic-viewer { align-items:center; }
+body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:calc(100vh - 44px); height:auto; }
+.page-indicator { color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }

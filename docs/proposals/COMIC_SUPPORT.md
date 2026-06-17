@@ -218,15 +218,32 @@ viewer** served at the existing reader route, chosen by format:
 - `GET /read/{slug}` renders `reader.html` for epubs (epub.js) or a new
   `comic.html` for cbz, based on `book.Format`.
 - New endpoints for the comic viewer:
-  - `GET /book/{slug}/pages` -> JSON list of page count (or page URLs).
-  - `GET /book/{slug}/page/{n}` -> the nth page image (served from the archive,
-    or from a per-comic extracted page cache, §8).
+  - `GET /book/{slug}/pages` -> JSON `{count: N}` (page count).
+  - `GET /book/{slug}/page/{n}` -> the nth page image (0-based), served straight
+    from the archive via `comic.PageImage` with the right image mime.
 - `comic.js` (matching the css/js/vendor split): a minimal pager (prev/next,
   keyboard arrows, fit-width/fit-height, page indicator). Reuses the dark-mode
   toggle from `app.js`. No framework; this is a handful of `<img>` swaps.
 
-Reading-position persistence reuses the existing `read_state` table (store the
-page number in `percent`/`cfi`, or add a `page` column).
+**Gaps found wiring the reader (step 4):**
+
+- `reader()` always renders `reader.html`; it must branch on `book.Format`
+  (epub -> `reader.html`, cbz -> `comic.html`).
+- `file()` (`GET /book/{slug}/file`) hardcodes `application/epub+zip` and a
+  `.epub` download name. It must serve `application/vnd.comicbook+zip` / `.cbz`
+  for comics (also needed by OPDS in §7). Branch on format.
+- `cover()`'s cache-MISS path hardcodes `epub.CoverImage`, so a comic indexed
+  before its cover was cached would 404. Use a format-neutral cover extractor
+  (exported from the catalog) instead.
+- Reading-position persistence: there is a `PUT /api/books/{slug}/read`
+  (`{percent, cfi}`) but NO GET to read it back; the epub reader only saves,
+  never restores. For comics, restoring the page matters more. Store the page
+  index in `read_state` (page number in `cfi` as a string, `percent` =
+  page/count) and surface the saved page to `comic.html` at render time (embed
+  it in the page like `BOOK_SLUG`), so no new GET endpoint is required.
+
+Reading-position persistence reuses the existing `read_state` table (page number
+in `cfi`, fractional `percent`); no schema change.
 
 ## 7. OPDS
 
@@ -256,21 +273,28 @@ slow. Keep it a derived cache (safe to wipe), consistent with `data/covers`.
 **CBZ end-to-end first (steps 1-5), then CBR (step 6).** Each step is
 independently verifiable; CBR is isolated last because it is the only hard part.
 
-1. Schema `format` column + `Book.Format`; backfill existing rows to `epub` by
-   extension on scan. Teach `Index` to branch on format (epub vs cbz). The
-   on-disk layout becomes `Author/Title.<ext>` (extend `fileutil.LibraryRelPath`
+1. (DONE) Schema `format` column + `Book.Format`; backfill existing rows to
+   `epub` by extension on scan. Teach `Index` to branch on format (epub vs cbz).
+   The on-disk layout becomes `Author/Title.<ext>` (extend `fileutil.LibraryRelPath`
    to take the extension).
-2. `internal/comic`: `Read`, `Pages`, `PageImage`, `CoverImage` for CBZ. Unit
-   tests with synthetic CBZ fixtures (a zip of tiny images + a ComicInfo.xml
+2. (DONE) `internal/comic`: `Read`, `Pages`, `PageImage`, `CoverImage` for CBZ.
+   Unit tests with synthetic CBZ fixtures (a zip of tiny images + a ComicInfo.xml
    case and a filename-only case). Nail the page-ordering sort (natural/numeric,
    zero-padded vs not, nested dirs, skip non-image + `ComicInfo.xml`).
-3. Import: `importable()` accepts `.cbz`; the pipeline routes a `.cbz` through a
-   no-DRM branch into the shared tail (verify -> dedup -> name -> move -> index
-   -> archive). Verify end to end (drop a CBZ, see it in the catalog with a
-   cover). No sidecar.
-4. Reader: format-based template selection at `/read/{slug}` + the comic viewer
-   endpoints (`/book/{slug}/pages`, `/book/{slug}/page/{n}`) + `comic.js`.
-   (Browser-verified by you; JS is checked statically.)
+3. (DONE) Import: `importable()` accepts `.cbz`; the pipeline routes a `.cbz`
+   through a no-DRM branch into the shared tail (verify -> dedup -> name -> move
+   -> index -> archive). Verified end to end (`TestImportComicEndToEnd`). No
+   sidecar.
+4. (DONE) Reader: `reader()` selects `comic.html` for cbz; the comic viewer
+   endpoints `GET /book/{slug}/pages` (count) and `GET /book/{slug}/page/{n}`
+   (image) serve straight from the archive; `comic.js` is a dependency-free pager
+   (prev/next, arrow keys, tap-thirds, fit width/height, page indicator) that
+   persists the page via the existing read endpoint (page number in `cfi`) and
+   restores it on open (embedded as `START_PAGE`). `file()` now serves
+   `application/vnd.comicbook+zip` / `.cbz` for comics, and the cover cache-miss
+   path is format-neutral. Verified: comic template renders (not epub), `/pages`
+   count, `/page/{n}` bytes + mime, out-of-range 404, comic download media type.
+   Browser behavior (paging, fit, resume) is for the user to confirm.
 5. OPDS: emit `application/vnd.comicbook+zip` for cbz entries.
 6. CBR: add `.cbr` to `importable()`; convert CBR -> CBZ inside `pipeline()`
    using `nwaples/rardecode`, reporting progress through the existing

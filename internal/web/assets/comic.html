@@ -1,0 +1,38 @@
+{{define "comic.html"}}<!doctype html>
+<html lang="en" class="reader">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Book.Title}}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script>
+  // Pre-paint theme apply (inline so there is no flash before app.js loads).
+  (function () {
+    const saved = localStorage.getItem("theme");
+    const dark = saved ? saved === "dark"
+                       : matchMedia("(prefers-color-scheme: dark)").matches;
+    if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  })();
+  window.BOOK_SLUG = "{{.Book.Slug}}";
+  window.START_PAGE = {{.StartPage}};
+</script>
+<script src="/static/js/app.js" defer></script>
+</head>
+<body class="reader comic">
+<div id="bar">
+  <a href="/">&larr; Library</a>
+  <strong>{{.Book.Title}}</strong>
+  <span id="page-indicator" class="page-indicator"></span>
+  <span style="margin-left:auto"></span>
+  <button onclick="readerPrev()">Prev</button>
+  <button onclick="readerNext()">Next</button>
+  <button id="fit-btn" type="button" onclick="comicToggleFit()" title="Toggle fit width/height">Fit</button>
+  <button id="theme-btn" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+</div>
+<div id="viewer" class="comic-viewer">
+  <img id="comic-page" alt="comic page">
+</div>
+
+<script src="/static/js/comic.js"></script>
+</body>
+</html>{{end}}

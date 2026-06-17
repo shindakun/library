@@ -684,6 +684,9 @@ func (c *Catalog) AbsPath(b *Book) string {
 	return filepath.Join(c.libraryRoot, b.Path)
 }
 
+// LibraryRoot returns the directory under which book files live.
+func (c *Catalog) LibraryRoot() string { return c.libraryRoot }
+
 // SaveReadState upserts the browser reading position for a book.
 func (c *Catalog) SaveReadState(ctx context.Context, bookID int64, percent float64, cfi string) error {
 	_, err := c.db.ExecContext(ctx, `
@@ -691,6 +694,22 @@ func (c *Catalog) SaveReadState(ctx context.Context, bookID int64, percent float
 		ON CONFLICT(book_id) DO UPDATE SET percent=excluded.percent, cfi=excluded.cfi, updated_at=excluded.updated_at`,
 		bookID, percent, cfi, time.Now().Unix())
 	return err
+}
+
+// ReadState returns the saved reading position for a book: the fractional
+// percent and the format-specific cfi (an epub CFI string, or a comic's page
+// number as a string). Both are zero/empty if nothing has been saved.
+func (c *Catalog) ReadState(ctx context.Context, bookID int64) (percent float64, cfi string) {
+	// Best-effort: a missing row leaves the zero values, which is "start".
+	_ = c.db.QueryRowContext(ctx, `SELECT percent, cfi FROM read_state WHERE book_id=?`, bookID).Scan(&percent, &cfi)
+	return percent, cfi
+}
+
+// CoverImageFor extracts a cover from a book file, branching on format (epub or
+// comic), so callers outside the catalog (e.g. the cover handler's cache-miss
+// path) need not know the format.
+func CoverImageFor(absPath string) ([]byte, string, error) {
+	return coverImageFor(absPath)
 }
 
 // --- helpers --------------------------------------------------------------

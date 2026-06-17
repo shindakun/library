@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/steve/library/internal/catalog"
+	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/drm"
-	"github.com/steve/library/internal/epub"
 	"github.com/steve/library/internal/fileutil"
 	"github.com/steve/library/internal/ingest"
 )
@@ -61,6 +61,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /read/{slug}", s.reader)
 	mux.HandleFunc("GET /book/{slug}/file", s.file)
 	mux.HandleFunc("GET /book/{slug}/cover", s.cover)
+	mux.HandleFunc("GET /book/{slug}/pages", s.comicPages)
+	mux.HandleFunc("GET /book/{slug}/page/{n}", s.comicPage)
 	mux.HandleFunc("GET /api/books", s.apiBooks)
 	mux.HandleFunc("PUT /api/books/{slug}/read", s.apiSaveRead)
 	mux.HandleFunc("POST /api/scan", s.apiScan)
@@ -96,6 +98,17 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request) {
 		s.bookErr(w, err)
 		return
 	}
+	if b.Format == "cbz" {
+		// Restore the saved page (cfi holds the page number for comics).
+		page := 0
+		if _, cfi := s.Cat.ReadState(r.Context(), b.ID); cfi != "" {
+			if n, perr := strconv.Atoi(cfi); perr == nil && n >= 0 {
+				page = n
+			}
+		}
+		s.render(w, "comic.html", map[string]any{"Book": b, "StartPage": page})
+		return
+	}
 	s.render(w, "reader.html", map[string]any{"Book": b})
 }
 
@@ -105,9 +118,14 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 		s.bookErr(w, err)
 		return
 	}
-	// Content-Disposition gives the X4 (and browsers) a sane filename.
-	w.Header().Set("Content-Type", "application/epub+zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileutil.SafeFilename(b.Title)+".epub"))
+	// Content type + download filename match the format so e-readers and OPDS
+	// clients get the right media type (comics download as .cbz).
+	ctype, ext := "application/epub+zip", ".epub"
+	if b.Format == "cbz" {
+		ctype, ext = "application/vnd.comicbook+zip", ".cbz"
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileutil.SafeFilename(b.Title)+ext))
 	http.ServeFile(w, r, s.Cat.AbsPath(b))
 }
 
@@ -123,14 +141,63 @@ func (s *Server) cover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Miss (e.g. a book indexed before the cache existed): extract live, populate
-	// the cache for next time, and serve.
-	data, mime, err := epub.CoverImage(s.Cat.AbsPath(b))
+	// the cache for next time, and serve. Format-neutral so comics work too.
+	data, mime, err := catalog.CoverImageFor(s.Cat.AbsPath(b))
 	if err != nil {
 		http.Error(w, "no cover", http.StatusNotFound)
 		return
 	}
 	s.Cat.CacheCoverData(b, data, mime)
 	w.Header().Set("Content-Type", mime)
+	_, _ = w.Write(data)
+}
+
+// comicPages returns the page count for a comic as {"count": N}. The comic
+// viewer fetches this once to size its pager.
+func (s *Server) comicPages(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	if b.Format != "cbz" {
+		http.Error(w, "not a comic", http.StatusNotFound)
+		return
+	}
+	pages, err := comic.Pages(s.Cat.AbsPath(b))
+	if err != nil {
+		http.Error(w, "cannot read comic", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]int{"count": len(pages)})
+}
+
+// comicPage serves the nth page image (0-based) of a comic, straight from the
+// archive with the page's own image mime type.
+func (s *Server) comicPage(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	if b.Format != "cbz" {
+		http.Error(w, "not a comic", http.StatusNotFound)
+		return
+	}
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil || n < 0 {
+		http.Error(w, "bad page number", http.StatusBadRequest)
+		return
+	}
+	data, mime, err := comic.PageImage(s.Cat.AbsPath(b), n)
+	if err != nil {
+		http.Error(w, "no such page", http.StatusNotFound)
+		return
+	}
+	// Pages inside a comic are immutable for the life of the slug (content hash),
+	// so let the browser cache them aggressively while paging back and forth.
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	_, _ = w.Write(data)
 }
 
