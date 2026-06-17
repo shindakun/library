@@ -4,14 +4,21 @@ package fileutil
 import "path/filepath"
 
 // LibraryRelPath returns the library-relative path for a book, organized on
-// disk as "Author/Title.epub". The first author is used as the folder; books
-// with no author go under "Unknown Author". Both segments are sanitized.
-func LibraryRelPath(authors []string, title string) string {
+// disk as "Author/Title<ext>" (e.g. ".epub" or ".cbz"). The first author is used
+// as the folder; books with no author go under "Unknown Author". Both segments
+// are sanitized. ext may be given with or without a leading dot; an empty ext
+// defaults to ".epub".
+func LibraryRelPath(authors []string, title, ext string) string {
 	author := "Unknown Author"
 	if len(authors) > 0 && authors[0] != "" {
 		author = authors[0]
 	}
-	return filepath.Join(SafeFilename(author), SafeFilename(title)+".epub")
+	if ext == "" {
+		ext = ".epub"
+	} else if ext[0] != '.' {
+		ext = "." + ext
+	}
+	return filepath.Join(SafeFilename(author), SafeFilename(title)+ext)
 }
 
 // SafeFilename strips characters that are illegal or troublesome in filenames

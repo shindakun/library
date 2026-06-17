@@ -9,17 +9,21 @@ func TestLibraryRelPath(t *testing.T) {
 	cases := []struct {
 		authors []string
 		title   string
+		ext     string
 		want    string
 	}{
-		{[]string{"Megan E. O'Keefe"}, "Chaos Vector", filepath.Join("Megan E. O'Keefe", "Chaos Vector.epub")},
-		{[]string{"A", "B"}, "T", filepath.Join("A", "T.epub")}, // first author only
-		{nil, "Orphan", filepath.Join("Unknown Author", "Orphan.epub")},
-		{[]string{""}, "Orphan", filepath.Join("Unknown Author", "Orphan.epub")},
-		{[]string{"Bad/Name"}, "Bad:Title", filepath.Join("Bad_Name", "Bad_Title.epub")}, // sanitized
+		{[]string{"Auth One"}, "Sample Title", ".epub", filepath.Join("Auth One", "Sample Title.epub")},
+		{[]string{"A", "B"}, "T", ".epub", filepath.Join("A", "T.epub")}, // first author only
+		{nil, "Orphan", ".epub", filepath.Join("Unknown Author", "Orphan.epub")},
+		{[]string{""}, "Orphan", ".epub", filepath.Join("Unknown Author", "Orphan.epub")},
+		{[]string{"Bad/Name"}, "Bad:Title", ".epub", filepath.Join("Bad_Name", "Bad_Title.epub")}, // sanitized
+		{[]string{"Auth One"}, "Issue 1", ".cbz", filepath.Join("Auth One", "Issue 1.cbz")},       // comic
+		{[]string{"Auth One"}, "No Dot", "cbz", filepath.Join("Auth One", "No Dot.cbz")},          // ext normalized
+		{[]string{"Auth One"}, "Default", "", filepath.Join("Auth One", "Default.epub")},          // empty -> epub
 	}
 	for _, c := range cases {
-		if got := LibraryRelPath(c.authors, c.title); got != c.want {
-			t.Errorf("LibraryRelPath(%v, %q) = %q, want %q", c.authors, c.title, got, c.want)
+		if got := LibraryRelPath(c.authors, c.title, c.ext); got != c.want {
+			t.Errorf("LibraryRelPath(%v, %q, %q) = %q, want %q", c.authors, c.title, c.ext, got, c.want)
 		}
 	}
 }

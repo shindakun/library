@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/epub"
 	"github.com/steve/library/internal/fileutil"
 	_ "modernc.org/sqlite"
@@ -122,12 +123,46 @@ func (c *Catalog) cacheCover(absPath, slug string) {
 			return
 		}
 	}
-	data, mime, err := epub.CoverImage(absPath)
+	data, mime, err := coverImageFor(absPath)
 	if err != nil {
-		return // no cover in the epub; nothing to cache
+		return // no cover; nothing to cache
 	}
 	dst := filepath.Join(c.coversDir, slug+coverExt(mime))
 	_ = os.WriteFile(dst, data, 0o644)
+}
+
+// readMetadata reads book metadata regardless of format and returns it in the
+// epub.Metadata shape upsertBook expects. Comics map their ComicInfo.xml /
+// filename-derived fields onto the same struct (epub-only fields stay empty), so
+// the index path needs no format branching beyond this one call.
+func readMetadata(absPath string) (*epub.Metadata, error) {
+	if formatForPath(absPath) == "cbz" {
+		cm, err := comic.Read(absPath)
+		if err != nil {
+			return nil, err
+		}
+		return &epub.Metadata{
+			Title:       cm.Title,
+			Authors:     cm.Authors,
+			Series:      cm.Series,
+			SeriesIndex: cm.SeriesIndex,
+			Language:    cm.Language,
+			Description: cm.Description,
+			Published:   cm.Published,
+			Identifiers: map[string]string{},
+			HasCover:    cm.HasCover,
+		}, nil
+	}
+	return epub.Read(absPath)
+}
+
+// coverImageFor extracts a cover from a book file, branching on format so the
+// cover cache stores the right bytes for epubs and comics alike.
+func coverImageFor(absPath string) ([]byte, string, error) {
+	if formatForPath(absPath) == "cbz" {
+		return comic.CoverImage(absPath)
+	}
+	return epub.CoverImage(absPath)
 }
 
 // formatForPath classifies a library file by extension into the catalog's
@@ -232,9 +267,9 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 		return 0, err
 	}
 
-	meta, err := epub.Read(absPath)
+	meta, err := readMetadata(absPath)
 	if err != nil {
-		return 0, fmt.Errorf("read epub metadata: %w", err)
+		return 0, fmt.Errorf("read metadata: %w", err)
 	}
 
 	tx, err := c.db.BeginTx(ctx, nil)
@@ -421,7 +456,7 @@ func (c *Catalog) Reorganize(ctx context.Context) (int, error) {
 	}
 	moved := 0
 	for _, b := range books {
-		want := fileutil.LibraryRelPath(b.Authors, b.Title)
+		want := fileutil.LibraryRelPath(b.Authors, b.Title, filepath.Ext(b.Path))
 		if want == b.Path {
 			continue // already organized
 		}

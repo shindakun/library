@@ -186,10 +186,29 @@ content hash, name `Author/Title.cbz`, move into the library, index, archive the
 original to `done/`. The DRM sidecar is never touched for comics (they are
 DRM-free, like the existing direct-epub-import branch).
 
+**Gaps found in `handle()`/`pipeline()` while building (step 3):**
+
+- `pipeline()`'s non-acsm branch unconditionally calls
+  `epub.IsADEPTEncrypted(hostPath)`. A `.cbz` is a ZIP but not an epub; that call
+  errors. So `pipeline()` must branch on format **first**: a comic is a pure
+  passthrough (return hostPath unchanged, sidecar untouched), exactly like a
+  DRM-free epub but without the epub inspection.
+- `handle()`'s verify step hardcodes `epub.Read(cleanHostPath)` to both validate
+  the file and get `Authors`/`Title` for the destination name. For a `.cbz` this
+  must be `comic.Read`. Both return the same field names (by design), but they
+  are different types, so verify branches on format and yields just the
+  `(authors []string, title string)` the destination naming needs.
+- `LibraryRelPath` hardcodes `.epub`; the comic destination must end `.cbz`. It
+  now takes the extension.
+- `importable()` and `sourceFor()` are epub/acsm-only; add `.cbz`
+  (`sourceFor` -> "comic-import").
+
 `catalog.Index` branches: `.epub` -> `epub.Read`/`epub.CoverImage` as now;
-`.cbz` -> `comic.Read`/`comic.CoverImage`. It sets the `format` column
-accordingly. The cover cache is unchanged: it already keys on slug and stores
-whatever bytes the format's `CoverImage` returns.
+`.cbz` -> `comic.Read`/`comic.CoverImage` (via a small format-neutral metadata
+adapter so `upsertBook` is unchanged). `cacheCover` likewise branches on the
+file extension. It sets the `format` column from `formatForPath` (already in
+place from step 1). The cover cache is otherwise unchanged: it keys on slug and
+stores whatever bytes the format's `CoverImage` returns.
 
 ## 6. The reader (browser)
 

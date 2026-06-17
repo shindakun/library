@@ -15,6 +15,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/steve/library/internal/catalog"
+	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/drm"
 	"github.com/steve/library/internal/epub"
 	"github.com/steve/library/internal/fileutil"
@@ -213,13 +214,14 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 		return
 	}
 
-	// Verify it's a real, parseable epub BEFORE committing it to the library:
-	// metadata read doubles as a "is this actually a valid book" check, and the
-	// title gives us a clean library filename (no ".clean" pipeline artifact).
+	// Verify it's a real, parseable book BEFORE committing it to the library:
+	// the metadata read doubles as a "is this actually a valid file" check, and
+	// the title/authors give us a clean library filename. Branch on format: an
+	// epub is parsed by epub.Read, a comic by comic.Read.
 	jobs.Update(jobID, func(j *Job) { j.Step = "verifying" })
-	meta, err := epub.Read(cleanHostPath)
+	authors, title, err := verify(cleanHostPath)
 	if err != nil {
-		failJob(fmt.Errorf("verify clean epub: %w", err))
+		failJob(fmt.Errorf("verify clean file: %w", err))
 		return
 	}
 
@@ -235,9 +237,10 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 		}
 	}
 
-	// Organize on disk as Author/Title.epub.
+	// Organize on disk as Author/Title.<ext>, preserving the source extension so
+	// comics land as .cbz and epubs as .epub.
 	jobs.Update(jobID, func(j *Job) { j.Step = "indexing" })
-	dest := filepath.Join(im.LibraryDir, fileutil.LibraryRelPath(meta.Authors, meta.Title))
+	dest := filepath.Join(im.LibraryDir, fileutil.LibraryRelPath(authors, title, filepath.Ext(cleanHostPath)))
 	dest = uniquePath(dest)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		failJob(fmt.Errorf("create author dir: %w", err))
@@ -287,6 +290,13 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string, onProgress pr
 	if onProgress == nil {
 		onProgress = func(string, float64, string) {}
 	}
+	// Comics carry no DRM and are not epubs: skip the sidecar and the epub
+	// inspection entirely (epub.IsADEPTEncrypted would error on a CBZ). The file
+	// is imported as-is, exactly like a DRM-free epub but without epub probing.
+	if isComic(hostPath) {
+		return hostPath, nil
+	}
+
 	isACSM := strings.EqualFold(filepath.Ext(hostPath), ".acsm")
 
 	// Fast path: a plain DRM-free epub needs no fulfillment or decryption.
@@ -359,15 +369,48 @@ func uniquePath(p string) string {
 }
 
 func importable(name string) bool {
-	ext := strings.ToLower(filepath.Ext(name))
-	return ext == ".acsm" || ext == ".epub"
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".acsm", ".epub", ".cbz":
+		return true
+	default:
+		return false
+	}
 }
 
 func sourceFor(p string) string {
-	if strings.EqualFold(filepath.Ext(p), ".acsm") {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".acsm":
 		return "acsm"
+	case ".cbz":
+		return "comic-import"
+	default:
+		return "epub-import"
 	}
-	return "epub-import"
+}
+
+// isComic reports whether a dropped file is a comic archive (imported without
+// the DRM sidecar). CBR joins this set when convert-on-import lands.
+func isComic(p string) bool {
+	return strings.EqualFold(filepath.Ext(p), ".cbz")
+}
+
+// verify parses the finished file to confirm it is a real, readable book and to
+// pull the authors + title used for the on-disk library name. It branches on
+// format: epub via epub.Read, comic via comic.Read. A parse failure here means
+// the file is corrupt/unsupported and the import fails (lands in failed/).
+func verify(path string) (authors []string, title string, err error) {
+	if isComic(path) {
+		m, e := comic.Read(path)
+		if e != nil {
+			return nil, "", e
+		}
+		return m.Authors, m.Title, nil
+	}
+	m, e := epub.Read(path)
+	if e != nil {
+		return nil, "", e
+	}
+	return m.Authors, m.Title, nil
 }
 
 func moveFile(src, dst string) error {
