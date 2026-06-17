@@ -291,9 +291,14 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string, onProgress pr
 		onProgress = func(string, float64, string) {}
 	}
 	// Comics carry no DRM and are not epubs: skip the sidecar and the epub
-	// inspection entirely (epub.IsADEPTEncrypted would error on a CBZ). The file
-	// is imported as-is, exactly like a DRM-free epub but without epub probing.
+	// inspection entirely (epub.IsADEPTEncrypted would error on a CBZ).
 	if isComic(hostPath) {
+		// A CBZ imports as-is. A CBR is converted to a CBZ in the work dir first,
+		// so the rest of the system only ever sees ZIPs; the converted file flows
+		// through the shared tail exactly like a native CBZ.
+		if isCBR(hostPath) {
+			return im.convertCBR(hostPath, onProgress)
+		}
 		return hostPath, nil
 	}
 
@@ -328,6 +333,31 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string, onProgress pr
 	}
 	// Sidecar wrote into the shared work dir; map back to the host view.
 	return filepath.Join(im.workDir(), filepath.Base(cleanSidecarPath)), nil
+}
+
+// convertCBR turns a dropped .cbr into a .cbz in the work dir and returns the
+// CBZ path. Conversion reports page-by-page progress into the import job, so the
+// /imports bar fills during what can be a multi-minute extract on a large comic.
+func (im *Importer) convertCBR(hostPath string, onProgress progressFunc) (string, error) {
+	work := im.workDir()
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		return "", fmt.Errorf("create work dir: %w", err)
+	}
+	base := strings.TrimSuffix(filepath.Base(hostPath), filepath.Ext(hostPath))
+	dst := filepath.Join(work, base+".cbz")
+
+	onProgress("converting", 0, "")
+	err := comic.ConvertCBR(hostPath, dst, func(done, total int) {
+		frac := 0.0
+		if total > 0 {
+			frac = float64(done) / float64(total)
+		}
+		onProgress("converting", frac, fmt.Sprintf("page %d/%d", done, total))
+	})
+	if err != nil {
+		return "", fmt.Errorf("convert cbr: %w", err)
+	}
+	return dst, nil
 }
 
 func (im *Importer) fail(hostPath string, cause error) {
@@ -377,7 +407,7 @@ func importable(name string) bool {
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".acsm", ".epub", ".cbz":
+	case ".acsm", ".epub", ".cbz", ".cbr":
 		return true
 	default:
 		return false
@@ -388,7 +418,7 @@ func sourceFor(p string) string {
 	switch strings.ToLower(filepath.Ext(p)) {
 	case ".acsm":
 		return "acsm"
-	case ".cbz":
+	case ".cbz", ".cbr":
 		return "comic-import"
 	default:
 		return "epub-import"
@@ -396,9 +426,15 @@ func sourceFor(p string) string {
 }
 
 // isComic reports whether a dropped file is a comic archive (imported without
-// the DRM sidecar). CBR joins this set when convert-on-import lands.
+// the DRM sidecar): a CBZ, or a CBR that will be converted to CBZ at import.
 func isComic(p string) bool {
-	return strings.EqualFold(filepath.Ext(p), ".cbz")
+	ext := strings.ToLower(filepath.Ext(p))
+	return ext == ".cbz" || ext == ".cbr"
+}
+
+// isCBR reports whether a file is a RAR-based comic needing conversion to CBZ.
+func isCBR(p string) bool {
+	return strings.EqualFold(filepath.Ext(p), ".cbr")
 }
 
 // verify parses the finished file to confirm it is a real, readable book and to

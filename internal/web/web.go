@@ -241,11 +241,10 @@ func (s *Server) apiSaveRead(w http.ResponseWriter, r *http.Request) {
 
 // uploadableExt reports whether an uploaded file's extension is one the import
 // pipeline accepts. Kept in sync with ingest.importable: .acsm/.epub go through
-// the DRM pipeline, .cbz is a comic. (.cbr is not accepted until convert-on-
-// import lands.)
+// the DRM pipeline, .cbz/.cbr are comics (a .cbr is converted to .cbz at import).
 func uploadableExt(ext string) bool {
 	switch ext {
-	case ".acsm", ".epub", ".cbz":
+	case ".acsm", ".epub", ".cbz", ".cbr":
 		return true
 	default:
 		return false
@@ -274,7 +273,7 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
 	if !uploadableExt(ext) {
-		http.Error(w, "only .acsm, .epub, or .cbz accepted", http.StatusUnsupportedMediaType)
+		http.Error(w, "only .acsm, .epub, .cbz, or .cbr accepted", http.StatusUnsupportedMediaType)
 		return
 	}
 	name := fileutil.SafeFilename(strings.TrimSuffix(filepath.Base(hdr.Filename), ext)) + ext

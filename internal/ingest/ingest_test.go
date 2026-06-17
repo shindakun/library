@@ -11,12 +11,12 @@ import (
 )
 
 func TestImportable(t *testing.T) {
-	yes := []string{"book.acsm", "book.epub", "BOOK.EPUB", "x.AcSm", "a.b.epub", "comic.cbz", "C.CBZ"}
+	yes := []string{"book.acsm", "book.epub", "BOOK.EPUB", "x.AcSm", "a.b.epub", "comic.cbz", "C.CBZ", "comic.cbr", "X.CBR"}
 	no := []string{
-		"book.pdf", "book.txt", "book", "cover.jpg", ".epubx", "epub", "comic.cbr",
+		"book.pdf", "book.txt", "book", "cover.jpg", ".epubx", "epub",
 		// Hidden/temp upload stages share an importable extension but must be
 		// skipped so the watcher never grabs a partial file mid-write.
-		".upload-331674232.cbz", ".upload-1.epub",
+		".upload-331674232.cbz", ".upload-1.epub", ".upload-2.cbr",
 		filepath.Join("dir", ".upload-9.cbz"),
 	}
 	for _, n := range yes {
@@ -43,6 +43,9 @@ func TestSourceFor(t *testing.T) {
 	}
 	if got := sourceFor("x.cbz"); got != "comic-import" {
 		t.Errorf("sourceFor(.cbz) = %q, want comic-import", got)
+	}
+	if got := sourceFor("x.cbr"); got != "comic-import" {
+		t.Errorf("sourceFor(.cbr) = %q, want comic-import", got)
 	}
 }
 

@@ -1,10 +1,12 @@
 # Proposal: CBZ/CBR comic support
 
-Status: **proposed, not implemented.** Design + build plan for adding comic
-books (CBZ/CBR) alongside EPUBs: import them, catalog them, show covers, read
-them in the browser, and serve them over OPDS. The import *flow* is unchanged
-(watch, verify, name, move, index, archive); the work is making the catalog and
-reader format-aware.
+Status: **implemented** (steps 1-6 on the `comics` branch). Design + build record
+for adding comic books (CBZ/CBR) alongside EPUBs: import them, catalog them, show
+covers, read them in the browser, and serve them over OPDS. The import *flow* is
+unchanged (watch, verify, name, move, index, archive); the work was making the
+catalog and reader format-aware. Browser reading (the comic viewer) and behavior
+on real e-reader hardware are for the user to confirm; everything else is tested.
+The optional per-comic page cache (§8) is not built.
 
 ## 0. Decisions locked (read first)
 
@@ -304,12 +306,47 @@ independently verifiable; CBR is isolated last because it is the only hard part.
    by each caller's own pre-filter; check the callers, not just the funnel. Fixed
    with a shared `indexableExt` (epub + cbz). Tests: comic acquisition type;
    `TestScanIndexesComics`.
-6. CBR: add `.cbr` to `importable()`; convert CBR -> CBZ inside `pipeline()`
-   using `nwaples/rardecode`, reporting progress through the existing
-   `onProgress("converting", done/total, ...)` hook so the `/imports` bar fills.
-   The converted CBZ flows through the same tail as a native CBZ. Verify with a
-   real CBR (watch the progress bar). Confirm an encrypted/unreadable CBR fails
-   cleanly into `import/failed/`.
+6. (DONE) CBR -> CBZ at import. `comic.ConvertCBR` (pure-Go `rardecode/v2`, zero
+   transitive deps) does a header pass to count/​order image entries, then
+   extracts and re-zips them in natural reading order, reporting `done/total`.
+   `pipeline()` routes a `.cbr` (now in `isComic`) to `convertCBR`, which writes
+   a `.cbz` in the work dir and reports `onProgress("converting", frac, "page
+   N/M")`, so the `/imports` bar fills; the converted file flows through the same
+   tail as a native CBZ. `.cbr` joins `importable`/`uploadableExt`/`sourceFor`
+   but NOT `indexableExt` (only the converted `.cbz` lands in the library; the
+   original `.cbr` is archived to `done/`). Failure (encrypted/​unreadable/​no
+   images) removes the partial `.cbz` and lands the original in `import/failed/`.
+   VERIFIED against a real 743 MB, 366-page CBR: converted in ~35s, all 366 pages
+   byte-identical to an independent `unar` extraction and in correct order
+   (first/​middle/​last + full 366-page compare, 0 mismatches). Unit tests for the
+   page-ordering / no-images / partial-cleanup paths are skip-guarded on the
+   `rar` CLI (no pure-Go RAR writer exists to build a fixture in CI).
+
+   **API confirmed by cloning the dep (not assumed):** module path is
+   `github.com/nwaples/rardecode/v2` (the v2 API). The loop is tar-style:
+   `OpenReader(path) (*ReadCloser, error)`, then `Next() (*FileHeader, error)`
+   until `io.EOF`, reading the current entry via `(*Reader).Read`. `FileHeader`
+   carries `Name`, `IsDir`, `Encrypted`, `HeaderEncrypted`, `UnPackedSize`.
+
+   **Gaps to handle (found while designing step 6):**
+   - **Progress fraction needs a total.** RAR has no cheap up-front entry count
+     without iterating headers. Do a first pass over `Next()` (header-only, no
+     decompression) to count image entries, then a second pass that extracts and
+     re-zips, reporting `done/total`. Two passes reopen the archive; acceptable
+     for an import-time one-shot.
+   - **`isComic` must also accept `.cbr`** so `pipeline()` routes it to the
+     comic branch (skipping epub probing). The branch converts to a `.cbz` in
+     the work dir and returns THAT path, so the shared tail names it
+     `Author/Title.cbz` and `formatForPath` (which already maps `.cbr` -> cbz)
+     records the right format.
+   - **Accept-list spread:** `.cbr` joins `importable`, `uploadableExt`, and
+     `sourceFor` (-> "comic-import"). It must NOT join `indexableExt`: a raw
+     `.cbr` never lands in the library (only its converted `.cbz` does).
+   - **Encrypted/exotic fails cleanly:** if any `FileHeader.Encrypted` /
+     `HeaderEncrypted` is set, or `Next()`/`Read` errors, the conversion returns
+     an error and the import lands in `import/failed/` (no partial CBZ kept).
+   - **Page ordering** inside the CBR must match `internal/comic`'s natural sort,
+     so the re-zipped CBZ reads in the right order regardless of RAR entry order.
 7. (Optional) per-comic page cache if reading is slow.
 
 ## 10. Risks / notes
