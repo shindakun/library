@@ -120,8 +120,10 @@
   // renderPending fills a placeholder <li> for a file that has no real job yet
   // (still uploading, or uploaded and waiting for the watcher). state is one of
   // "uploading" | "queued" | "failed"; it is rendered in the same shape as a
-  // real job row so the in-progress upload looks exactly like a log row.
-  function renderPending(li, name, state, step, isError) {
+  // real job row so the in-progress upload looks exactly like a log row. frac,
+  // when >= 0, makes the bar determinate (the upload byte fraction); pass -1 for
+  // an indeterminate bar.
+  function renderPending(li, name, state, step, isError, frac) {
     li.className = "job pending";
     li.dataset.started = "9999"; // sort to the very top until the real job lands
     const head = document.createElement("div");
@@ -137,8 +139,28 @@
     line.className = isError ? "job-error" : "job-step";
     line.textContent = step;
     li.replaceChildren(head, line);
-    // No progress bar on a failed row; otherwise an indeterminate one.
-    if (!isError) li.appendChild(document.createElement("progress"));
+    if (!isError) {
+      const bar = document.createElement("progress");
+      if (typeof frac === "number" && frac >= 0) {
+        bar.max = 1;
+        bar.value = frac;
+      }
+      li.appendChild(bar);
+    }
+  }
+
+  // setPendingProgress updates just the bar of an existing pending row to a new
+  // upload fraction (0..1) without rebuilding the row, so it animates smoothly.
+  function setPendingProgress(li, step, frac) {
+    const line = li.querySelector(".job-step");
+    if (line) line.textContent = step;
+    let bar = li.querySelector("progress");
+    if (!bar) {
+      bar = document.createElement("progress");
+      li.appendChild(bar);
+    }
+    bar.max = 1;
+    bar.value = frac;
   }
 
   // pendingRow returns the placeholder <li> for name, creating it if needed.
@@ -202,38 +224,54 @@
       const body = new FormData(form);
       if (btn) btn.disabled = true;
 
-      // Show an "uploading" row immediately, keyed by the local filename.
+      // Show an "uploading" row immediately, keyed by the local filename, with a
+      // determinate bar starting at 0.
       const li = pendingRow(localName);
-      renderPending(li, localName, "uploading", "uploading…", false);
+      renderPending(li, localName, "uploading", "uploading…", false, 0);
       form.reset();
 
-      fetch(form.action, {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        body: body,
-      })
-        .then(function (resp) {
-          if (!resp.ok) {
-            return resp.text().then(function (t) {
-              throw new Error(t.trim() || "upload failed (" + resp.status + ")");
-            });
-          }
-          return resp.json();
-        })
-        .then(function (data) {
-          // The server may have sanitized the filename; rekey the row to the
-          // staged name so the real SSE job (which uses that name) adopts it.
-          const staged = data.queued || localName;
-          rekeyPending(localName, staged);
-          renderPending(pendingRow(staged), staged, "queued", "uploaded, waiting to import…", false);
-        })
-        .catch(function (err) {
-          renderPending(li, localName, "failed", err.message || "upload failed", true);
-          pending.delete(localName); // leave the failed row, but stop reconciling it
-        })
-        .finally(function () {
-          if (btn) btn.disabled = false;
-        });
+      // XMLHttpRequest (not fetch) because only XHR exposes upload byte progress,
+      // which is what fills the bar as the file streams to the server.
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", form.action);
+      xhr.setRequestHeader("Accept", "application/json");
+
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) {
+          const frac = e.total ? e.loaded / e.total : 0;
+          const pct = Math.round(frac * 100);
+          setPendingProgress(li, "uploading… " + pct + "%", frac);
+        }
+      };
+
+      xhr.onload = function () {
+        if (btn) btn.disabled = false;
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const msg = (xhr.responseText || "").trim() || "upload failed (" + xhr.status + ")";
+          renderPending(li, localName, "failed", msg, true);
+          pending.delete(localName);
+          return;
+        }
+        let staged = localName;
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (data && data.queued) staged = data.queued;
+        } catch (e) {
+          /* keep localName */
+        }
+        // Rekey the row to the staged name so the real SSE job adopts it, and
+        // flip it to "queued" with a full bar until the import job takes over.
+        rekeyPending(localName, staged);
+        renderPending(pendingRow(staged), staged, "queued", "uploaded, waiting to import…", false, 1);
+      };
+
+      xhr.onerror = function () {
+        if (btn) btn.disabled = false;
+        renderPending(li, localName, "failed", "upload failed (network error)", true);
+        pending.delete(localName);
+      };
+
+      xhr.send(body);
     });
   }
 
