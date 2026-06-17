@@ -14,6 +14,3 @@ if/when the feature is wanted; nothing here is wired into the running system.
   import Kobo books (Obok-based).
 - [proposals/METADATA_EDITING.md](proposals/METADATA_EDITING.md): in-browser
   metadata editing.
-- [proposals/IMPORT_PROGRESS.md](proposals/IMPORT_PROGRESS.md): import-job
-  tracking, live SSE progress, and a dedicated import page. **Implemented**
-  (shipped in v0.2.0); kept as the design record.
