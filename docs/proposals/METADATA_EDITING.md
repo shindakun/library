@@ -1,11 +1,12 @@
 # Implementation guide: metadata editing
 
-Status: **proposed, not implemented.** This guide is a design + build plan for
-in-browser metadata editing, kept deliberately lightweight (plain HTML forms,
-a few JSON endpoints, no new frontend dependencies, no file-rewriting in v1).
-Applies to both formats: the catalog row is format-neutral, so the v1
-DB-authoritative editor covers EPUBs and CBZ comics alike. Optional Phase 2
-write-back is format-specific (epub OPF, or a comic's `ComicInfo.xml`); see §7.
+Status: **in progress.** Design + build plan for in-browser metadata editing for
+both EPUBs and CBZ comics, kept lightweight (plain HTML forms, a few JSON
+endpoints, no new frontend dependencies). Edits land in the DB first, then are
+embedded into the file (best-effort, verify-before-swap); a successful embed
+replaces the original, a failed one keeps both the original file and the DB edit.
+The slug stays stable across embeds (§3). Most comics have no `ComicInfo.xml`, so
+for them embedding ADDS the metadata rather than replacing it.
 
 ## 1. The core tension to resolve first
 
@@ -18,18 +19,23 @@ or an import touching the same path).
 Any metadata-editing design must answer: **after a user edits a field, where is
 the truth, and how does scan avoid stomping it?**
 
-Three models, with the recommendation:
+**Model (decided): DB-first, then best-effort embed into the file.** An edit
+lands in the catalog immediately (the DB is the display source of truth and scan
+must not clobber edited fields), then write-back into the file is attempted
+against a copy and swapped in only if it verifies. This is the
+"DB-authoritative + write-back" model, but write-back is part of the default
+flow, not a deferred power-user action: the user's intent ("edit the book") is to
+change the book, and the DB-first step is what makes that safe (a failed rewrite
+never loses the edit or corrupts the file). See §3 for the locked decisions
+(stable slug, non-destructive embed, display-name-drives-filename) and §7 for the
+per-format rewrite mechanics.
 
-| Model | Edits live in | Pros | Cons |
-| --- | --- | --- | --- |
-| DB-authoritative (RECOMMENDED v1) | catalog row; scan skips edited fields | lightweight, safe, instant, no zip surgery | DB and file drift; edits not in the exported epub until written back |
-| File write-back | rewrite the epub OPF | file is portable/self-describing | heavy, risks corrupting the zip, slow; needs careful OPF surgery |
-| DB-authoritative + opt-in write-back | DB now, file on explicit "embed" action | best of both | two code paths; write-back is the hard part |
+The two hard requirements this design must satisfy:
 
-**v1 = DB-authoritative.** Editing writes to the catalog and the scan indexer
-learns to leave user-edited fields alone. Write-back to the epub is a separate,
-later phase (§6) because OPF-in-zip rewriting is the risky, heavy part and should
-never be the default path for a "keep it lite" project.
+1. **Scan must not stomp edits.** `catalog.Index`/`upsertBook` re-read the file
+   on every scan; edited columns are protected via `edited_fields` (§3).
+2. **Embed must never corrupt the library.** Rewrite a copy, verify it parses,
+   swap atomically, keep the original until the new one is good (§7).
 
 ## 2. Editable vs derived fields
 
@@ -45,16 +51,40 @@ From `catalog.Book`:
 
 ## 3. Schema changes
 
-Minimal additions to `internal/catalog/schema.go`:
+Additions to `internal/catalog/schema.go` (all via the idempotent
+`addColumnIfMissing` helper added for the comics `format` column):
 
 ```sql
 -- Per-book record of which fields the user has hand-edited, so scan won't
--- overwrite them from the file. JSON array of column names, or a bitfield.
+-- overwrite them from the file. JSON array of column names.
 ALTER TABLE books ADD COLUMN edited_fields TEXT NOT NULL DEFAULT '';
 ALTER TABLE books ADD COLUMN edited_at INTEGER;  -- unix; null = never edited
+
+-- Stable public id. The slug is the content-hash today; embedding edits into the
+-- file changes the hash, which would change every edited book's URL/OPDS id.
+-- slug_override is set ONCE at import (to the import-time content-hash slug) and
+-- never changes, so URLs survive embeds. Book.Slug() prefers it when present.
+ALTER TABLE books ADD COLUMN slug_override TEXT;
 ```
 
 `tags` / `book_tags` already exist; wire them up in the editor.
+
+**Decisions (locked):**
+
+- **Stable slug.** `slug_override` is captured at import and is what `Slug()`
+  returns thereafter, so a successful embed (which changes the file hash) does
+  NOT change the book's URL or OPDS identity. Bookmarks and e-reader library
+  entries survive edits.
+- **Embed is best-effort, never destructive.** Edits land in the DB first (the
+  DB is the display source of truth). Embedding into the file is then attempted
+  against a COPY; only a verified-good rewrite is swapped in. On any failure the
+  original file is untouched and the DB edit is kept, surfaced as "saved, not yet
+  embedded in file." The library can never be corrupted by an edit.
+- **Display name only; filename follows.** There is one editable "title"; the
+  on-disk filename is regenerated as `Author/Title.<ext>` on embed (via the
+  existing `fileutil.LibraryRelPath`). No separate filename field. If embed
+  fails, the DB title leads and the file keeps its old name until a later
+  successful embed reconciles it.
 
 A `edited_fields` value like `["title","authors"]` means: on the next scan,
 `upsertBook` keeps the DB's title and authors and only refreshes the
@@ -151,15 +181,19 @@ Covers are read live from the epub (`epub.CoverImage` on each `GET
 This keeps covers editable without touching the book file, consistent with the
 DB-authoritative model.
 
-## 7. Optional Phase 2: write-back to the file
+## 7. Write-back: embedding edits into the file
 
-Only if/when the user wants edits embedded in the file itself (for export or
-reading on a device that reads embedded metadata). Both formats follow the same
-shape: a deliberate `POST /book/{slug}/embed` action (never automatic), rewrite
-the archive to a temp file, validate it parses, atomically swap, and re-hash
-(which changes the slug, so update it and redirect; the slug change is the cost
-of embedding, surface it). The DB-authoritative editor (§1-6) is format-neutral
-and already covers comics; only this write-back step is format-specific.
+Part of the default edit flow (not deferred): after the DB edit lands, embed it
+into the file so the change is in the book/comic itself. Both formats follow the
+same shape: rewrite the archive to a temp file, validate it parses, atomically
+swap, then regenerate the on-disk filename from the new title
+(`fileutil.LibraryRelPath`) and update `path`. The slug does NOT change: it comes
+from `slug_override` (§3), set at import and stable across embeds. The
+catalog-side editor (§1-6) is format-neutral and covers both formats; only this
+rewrite step is format-specific.
+
+It runs after the DB write and is best-effort: a failed rewrite leaves the
+original file and the DB edit both intact (surface "saved, not yet embedded").
 
 ### EPUB: rewrite the OPF
 
@@ -184,22 +218,29 @@ and already covers comics; only this write-back step is format-specific.
 Both are the heavy, risky part (rewriting a zip can corrupt a file). Do it to a
 temp file, validate it parses (`epub.Read` / `comic.Read`) before swapping, and
 keep the original until the new one is verified. Treat it like the import
-pipeline's "verify before commit" step.
-
-Defer this. The DB-authoritative editor (§1-6) delivers the feature for both
-formats; write-back is a power-user add-on.
+pipeline's "verify before commit" step. ComicInfo.xml often does not exist in the
+source comic, so for most comics this ADDS the entry rather than replacing it.
 
 ## 8. Build order
 
-1. Schema: add `edited_fields` / `edited_at`. Wire `tags`/`book_tags`.
-2. `catalog.UpdateMetadata` + teach `upsertBook` to skip edited fields. Unit
-   tests: edit a field, scan the unchanged-and-changed file, assert the edit
-   survives and FTS reflects it.
-3. Edit form template + endpoints; the inline-save JS with form fallback.
-4. Cover override (dir + serve-override + upload endpoint).
-5. (Later) file write-back behind an explicit action, verify-before-swap:
-   epub OPF rewrite and CBZ `ComicInfo.xml` write/replace (the comic side reuses
-   `internal/comic`, which already reads ComicInfo.xml; this adds the writer).
+1. Schema: `edited_fields`, `edited_at`, `slug_override` (idempotent
+   `addColumnIfMissing`); backfill `slug_override` for existing rows to their
+   current content-hash slug on the next scan/migrate. Make `Book.Slug()` prefer
+   `slug_override`. Wire `tags`/`book_tags`. Tests: migration, slug stability.
+2. `catalog.UpdateMetadata(slug, Edits)` (DB write, join upserts, FTS re-sync,
+   record `edited_fields`) + teach `upsertBook` to skip edited columns on scan.
+   Tests: edit survives a rescan of the unchanged AND the changed file; FTS
+   reflects it.
+3. Write-back (format-specific, verify-before-swap): `comic.WriteComicInfo`
+   (add/replace ComicInfo.xml, store-copy pages) and `epub`-OPF rewrite. Each
+   rewrites a temp copy, re-parses it, swaps atomically, regenerates the filename
+   from the new title, and updates `path` (slug unchanged). Tests: round-trip a
+   CBZ with NO ComicInfo (it gets added) and one WITH it (replaced); embed
+   failure leaves original + DB edit intact.
+4. HTTP + UI: `GET /book/{slug}/edit` form, `PUT /api/books/{slug}` (DB edit then
+   attempt embed; report embed status), non-JS form fallback; an Edit affordance
+   on the grid/table and reader bar.
+5. Cover override (dir + serve-override + upload endpoint).
 
 ## 9. Risks / notes
 
