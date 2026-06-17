@@ -203,6 +203,10 @@
   // filename are distinct lines, each adopted by its own job.
   function newPendingRow(name) {
     const li = document.createElement("li");
+    // Set the sort key BEFORE placing: an unbound upload sorts to the very top
+    // (newest) so the row appears at the top immediately, not at the bottom
+    // until the real job's timestamp lands.
+    li.dataset.started = "9999";
     pushPending(name, li);
     place(li);
     syncEmpty();
