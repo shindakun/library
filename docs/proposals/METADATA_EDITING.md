@@ -218,11 +218,32 @@ rewrite step is format-specific.
 It runs after the DB write and is best-effort: a failed rewrite leaves the
 original file and the DB edit both intact (surface "saved, not yet embedded").
 
-### EPUB: rewrite the OPF
+### EPUB: rewrite the OPF (surgically, NOT a struct round-trip)
 
-- Open the epub zip, parse the OPF, replace the `dc:` elements + meta entries
-  with the catalog's current values, rewrite the cover if overridden, write a new
-  zip.
+**Gap / hard requirement found in step 3:** the obvious approach (unmarshal the
+OPF into `opfPackage`, mutate, re-marshal) is **lossy and destructive**: that
+struct captures only a subset of the OPF (a few `dc:` fields + a thin manifest);
+re-marshaling drops the spine, guide, unknown metadata, namespaces, attributes,
+and element order, producing an OPF that can break the book. The package's parse
+structs exist for *reading*, and must not be used to *write*.
+
+The safe method is **surgical text editing of the raw OPF bytes**:
+
+- Read the OPF entry's bytes. Locate the `<metadata>...</metadata>` span.
+- Within it, for each editable field, replace the existing `<dc:title>` (etc.)
+  element's text, or insert the element if absent (e.g. a comic-less-style epub
+  missing `dc:description`). Replace ALL `<dc:creator>` elements with the edited
+  author list; same for identifiers. Leave everything outside the targeted
+  elements byte-for-byte unchanged.
+- All inserted/replaced values are XML-escaped via `encoding/xml`
+  (`xml.EscapeText`), never string-concatenated, so an edited value like
+  `</dc:title><script>` cannot break out (ties into the sanitize requirement).
+- Re-zip: copy every original entry through unchanged EXCEPT the OPF, which is
+  replaced with the edited bytes. Preserve the `mimetype` entry first and stored
+  (uncompressed) per the EPUB spec.
+- This is fiddlier than the comic path; if the metadata block can't be located or
+  edited safely, FAIL the embed (keep the original + DB edit) rather than risk a
+  corrupt book.
 
 ### CBZ (comic): write/replace `ComicInfo.xml`
 
@@ -254,12 +275,18 @@ source comic, so for most comics this ADDS the entry rather than replacing it.
    record `edited_fields`) + teach `upsertBook` to skip edited columns on scan.
    Tests: edit survives a rescan of the unchanged AND the changed file; FTS
    reflects it.
-3. Write-back (format-specific, verify-before-swap): `comic.WriteComicInfo`
-   (add/replace ComicInfo.xml, store-copy pages) and `epub`-OPF rewrite. Each
-   rewrites a temp copy, re-parses it, swaps atomically, regenerates the filename
-   from the new title, and updates `path` (slug unchanged). Tests: round-trip a
-   CBZ with NO ComicInfo (it gets added) and one WITH it (replaced); embed
-   failure leaves original + DB edit intact.
+3. Write-back, split by risk (format-specific, verify-before-swap):
+   - **(3a, this step) Comic:** `comic.WriteComicInfo` (add/replace ComicInfo.xml,
+     store-copy pages, write to a temp file, re-`comic.Read` to verify). Small and
+     safe. Tests: round-trip a CBZ with NO ComicInfo (added) and one WITH it
+     (replaced); XML-escaping of hostile values; verify-before-swap.
+   - **(3b, next step) EPUB:** surgical OPF byte-edit (see §7) + re-zip preserving
+     every other entry and the stored `mimetype`. Riskier (varied OPF
+     prefixes/structure); its own focused step, verified against real epubs.
+   - Embed failure on either format leaves the original file AND the DB edit
+     intact. Both writers operate on a temp copy and swap only after the rewrite
+     re-parses. The caller regenerates the filename from the new title and updates
+     `path` (slug unchanged); that swap/rename/path-update glue lands in step 4.
 4. HTTP + UI: `GET /book/{slug}/edit` form, `PUT /api/books/{slug}` (DB edit then
    attempt embed; report embed status), non-JS form fallback; an Edit affordance
    on the grid/table and reader bar.
