@@ -13,11 +13,46 @@
 (function () {
   const list = document.getElementById("job-list");
   const empty = document.getElementById("job-empty");
-  const rows = new Map(); // job id -> <li>
-  const pending = new Map(); // filename -> placeholder <li> awaiting its real job
+  const rows = new Map(); // job id -> <li> (one row per real job, bound for life)
+  // filename -> queue of UNBOUND placeholder <li>s awaiting a real job. A queue
+  // (not a single slot) so re-uploading the same filename makes a distinct row
+  // each time; each placeholder is adopted by exactly one job id, oldest first.
+  const pending = new Map();
+
+  function pendingCount() {
+    let n = 0;
+    for (const q of pending.values()) n += q.length;
+    return n;
+  }
+
+  function pushPending(name, li) {
+    const q = pending.get(name);
+    if (q) q.push(li);
+    else pending.set(name, [li]);
+  }
+
+  // takePending removes and returns the oldest unbound placeholder for name, or
+  // null if none. Used by upsert() to adopt a placeholder for a newly-seen job.
+  function takePending(name) {
+    const q = pending.get(name);
+    if (!q || !q.length) return null;
+    const li = q.shift();
+    if (!q.length) pending.delete(name);
+    return li;
+  }
+
+  // dropPending removes a specific placeholder (e.g. a failed upload) from its
+  // queue so it is never adopted by a later job.
+  function dropPending(name, li) {
+    const q = pending.get(name);
+    if (!q) return;
+    const i = q.indexOf(li);
+    if (i >= 0) q.splice(i, 1);
+    if (!q.length) pending.delete(name);
+  }
 
   function syncEmpty() {
-    empty.style.display = rows.size || pending.size ? "none" : "";
+    empty.style.display = rows.size || pendingCount() ? "none" : "";
   }
 
   // Newest jobs on top. startedAt is an RFC3339 string; compare lexically
@@ -104,12 +139,11 @@
     if (!job || !job.id) return;
     let li = rows.get(job.id);
     if (!li) {
-      // First time we see this job id. If we have an optimistic placeholder for
-      // its filename, adopt that element so the row doesn't flicker; otherwise
-      // make a fresh one.
-      li = pending.get(job.name);
-      if (li) pending.delete(job.name);
-      else li = document.createElement("li");
+      // First time we see this job id. Adopt the oldest UNBOUND placeholder for
+      // its filename (the upload that triggered it) so the row doesn't flicker;
+      // otherwise make a fresh one. We never reuse an already-bound row, so a
+      // re-upload of the same filename can't clobber a finished job's row.
+      li = takePending(job.name) || document.createElement("li");
       rows.set(job.id, li);
     }
     render(li, job);
@@ -163,33 +197,24 @@
     bar.value = frac;
   }
 
-  // pendingRow returns the placeholder <li> for name, creating it if needed.
-  // Keyed by name so the upload flow can transition one row through its phases
-  // and so upsert() can later adopt it when the real SSE job arrives.
-  function pendingRow(name) {
-    let li = pending.get(name);
-    if (!li) {
-      // If the real job already arrived (snapshot raced us), reuse nothing.
-      for (const r of rows.values()) {
-        const nm = r.querySelector(".job-name");
-        if (nm && nm.textContent === name) return r;
-      }
-      li = document.createElement("li");
-      pending.set(name, li);
-      place(li);
-      syncEmpty();
-    }
+  // newPendingRow creates a fresh unbound placeholder <li> for a just-started
+  // upload, enqueues it under name, and returns it. Each upload gets its own row
+  // (never reuses an existing one), so concurrent or repeat uploads of the same
+  // filename are distinct lines, each adopted by its own job.
+  function newPendingRow(name) {
+    const li = document.createElement("li");
+    pushPending(name, li);
+    place(li);
+    syncEmpty();
     return li;
   }
 
-  // rekeyPending moves a placeholder from one name to another (the server may
-  // sanitize the uploaded filename; the SSE job uses the staged name).
-  function rekeyPending(from, to) {
+  // rekeyPending moves a placeholder from one name-queue to another (the server
+  // may sanitize the uploaded filename; the SSE job uses the staged name).
+  function rekeyPending(li, from, to) {
     if (from === to) return;
-    const li = pending.get(from);
-    if (!li) return;
-    pending.delete(from);
-    pending.set(to, li);
+    dropPending(from, li);
+    pushPending(to, li);
   }
 
   function connect() {
@@ -224,9 +249,10 @@
       const body = new FormData(form);
       if (btn) btn.disabled = true;
 
-      // Show an "uploading" row immediately, keyed by the local filename, with a
-      // determinate bar starting at 0.
-      const li = pendingRow(localName);
+      // Show a fresh "uploading" row immediately (its own line, even for a
+      // re-upload of the same filename), with a determinate bar starting at 0.
+      const li = newPendingRow(localName);
+      let curName = localName; // the queue this row currently lives under
       renderPending(li, localName, "uploading", "uploading…", false, 0);
       form.reset();
 
@@ -248,8 +274,8 @@
         if (btn) btn.disabled = false;
         if (xhr.status < 200 || xhr.status >= 300) {
           const msg = (xhr.responseText || "").trim() || "upload failed (" + xhr.status + ")";
-          renderPending(li, localName, "failed", msg, true);
-          pending.delete(localName);
+          dropPending(curName, li); // never adopt a failed upload
+          renderPending(li, curName, "failed", msg, true);
           return;
         }
         let staged = localName;
@@ -259,16 +285,18 @@
         } catch (e) {
           /* keep localName */
         }
-        // Rekey the row to the staged name so the real SSE job adopts it, and
-        // flip it to "queued" with a full bar until the import job takes over.
-        rekeyPending(localName, staged);
-        renderPending(pendingRow(staged), staged, "queued", "uploaded, waiting to import…", false, 1);
+        // Move the row to the staged-name queue so the real SSE job (which uses
+        // that name) adopts it, and flip it to "queued" with a full bar until the
+        // import job takes over.
+        rekeyPending(li, curName, staged);
+        curName = staged;
+        renderPending(li, staged, "queued", "uploaded, waiting to import…", false, 1);
       };
 
       xhr.onerror = function () {
         if (btn) btn.disabled = false;
-        renderPending(li, localName, "failed", "upload failed (network error)", true);
-        pending.delete(localName);
+        dropPending(curName, li);
+        renderPending(li, curName, "failed", "upload failed (network error)", true);
       };
 
       xhr.send(body);
