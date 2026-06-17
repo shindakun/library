@@ -172,10 +172,23 @@ func (s *Server) apiSaveRead(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// apiUpload accepts an .acsm or .epub via multipart form and drops it into the
-// import dir, where the watcher runs the same fulfill/decrypt pipeline as a
-// manual file drop. Written atomically (temp + rename) so the watcher never
-// sees a partial file.
+// uploadableExt reports whether an uploaded file's extension is one the import
+// pipeline accepts. Kept in sync with ingest.importable: .acsm/.epub go through
+// the DRM pipeline, .cbz is a comic. (.cbr is not accepted until convert-on-
+// import lands.)
+func uploadableExt(ext string) bool {
+	switch ext {
+	case ".acsm", ".epub", ".cbz":
+		return true
+	default:
+		return false
+	}
+}
+
+// apiUpload accepts an .acsm, .epub, or .cbz via multipart form and drops it
+// into the import dir, where the watcher runs the same pipeline as a manual file
+// drop. Written atomically (temp + rename) so the watcher never sees a partial
+// file.
 func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	if s.ImportDir == "" {
 		http.Error(w, "uploads not configured", http.StatusServiceUnavailable)
@@ -193,8 +206,8 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = file.Close() }()
 
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
-	if ext != ".acsm" && ext != ".epub" {
-		http.Error(w, "only .acsm or .epub accepted", http.StatusUnsupportedMediaType)
+	if !uploadableExt(ext) {
+		http.Error(w, "only .acsm, .epub, or .cbz accepted", http.StatusUnsupportedMediaType)
 		return
 	}
 	name := fileutil.SafeFilename(strings.TrimSuffix(filepath.Base(hdr.Filename), ext)) + ext

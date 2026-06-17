@@ -84,6 +84,32 @@ func TestUploadAcceptsEpub(t *testing.T) {
 	}
 }
 
+// TestUploadAcceptsComic pins that .cbz uploads are accepted and staged, so the
+// import page can upload comics (the file-picker accept list and this gate must
+// stay in sync with ingest.importable).
+func TestUploadAcceptsComic(t *testing.T) {
+	s, imp := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, uploadReq(t, "MyComic.cbz", "PK-fake-zip", "application/json"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v; body=%s", err, rec.Body.String())
+	}
+	if resp["queued"] != "MyComic.cbz" {
+		t.Errorf(`queued = %q, want "MyComic.cbz"`, resp["queued"])
+	}
+	if _, err := os.Stat(filepath.Join(imp, "MyComic.cbz")); err != nil {
+		t.Errorf("uploaded comic not staged in import dir: %v", err)
+	}
+}
+
 func TestUploadRejectsBadExtension(t *testing.T) {
 	s, imp := newTestServer(t)
 	mux := http.NewServeMux()
