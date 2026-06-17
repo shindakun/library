@@ -1,0 +1,50 @@
+# Build context hygiene. The image build only needs the Go module (go.mod/sum)
+# and the source under cmd/ and internal/ (which embeds assets/). Everything else
+# is dead weight in the build context (it was ~3.8GB without this file, almost all
+# of it books/comics under data/ and loose archives in the repo root).
+#
+# Keep this in sync with .gitignore's runtime-artifact rules, and exclude anything
+# the compiler does not read.
+
+# Secrets: must NEVER enter an image build context.
+secrets/
+secrets.bak/
+*.bak/
+
+# Library data: the library, covers, import staging, the catalog DB. Huge and
+# irrelevant to the build (the binary creates/reads these at runtime, not build).
+data/
+
+# Books / comics / loan tokens, wherever they sit (repo root included).
+*.acsm
+*.epub
+*.pdf
+*.der
+*.cbz
+*.cbr
+
+# VCS, CI, hooks, and tooling config the compiler doesn't read.
+.git/
+.github/
+.githooks/
+.golangci.yml
+.markdownlint.json
+
+# Docs and the build/deploy plumbing itself.
+docs/
+README.md
+Makefile
+docker/
+
+# Build outputs and test artifacts.
+bin/
+library
+*.test
+
+# Stray installers / Node litter / OS files.
+*.dmg
+*.pkg
+node_modules/
+package.json
+package-lock.json
+.DS_Store
