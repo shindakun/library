@@ -4,10 +4,11 @@
 
 # library
 
-A self-hosted ebook library: browser reader + an OPDS feed for any e-reader
-(verified on the **Xteink X4** running Crosspoint firmware), with an import
-pipeline that fulfills Adobe `.acsm` files and strips legacy ADEPT DRM on the
-way in.
+A self-hosted ebook (and comic) library: browser reader + an OPDS feed for any
+e-reader (verified on the **Xteink X4** running Crosspoint firmware), with an
+import pipeline that fulfills Adobe `.acsm` files and strips legacy ADEPT DRM on
+the way in. Reads EPUBs and comic archives (CBZ; CBR is converted to CBZ at
+import), with a dedicated in-browser comic reader.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and rationale, and
 [docs/DEPLOY.md](docs/DEPLOY.md) for deploying the compose stack on any Docker
@@ -17,8 +18,9 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
 ## Architecture (two containers)
 
 - **`library`**: Go service (single static binary). Catalog (SQLite), browser
-  reader (epub.js), OPDS 1.2 feed, import watcher (the `ingest` package), upload
-  endpoint. Never imports Python.
+  reader (epub.js for books, a built-in image-sequence viewer for comics), OPDS
+  1.2 feed, import watcher (the `ingest` package), upload endpoint. Never imports
+  Python.
 - **`drm-sidecar`**: quarantined Python worker. Runs `acsm-calibre-plugin`
   (fulfillment) + DeDRM's `ineptepub` (decryption). Reads `/secrets` for the
   Adobe activation + key, and writes it only during first-run setup.
@@ -34,20 +36,21 @@ receives an unbounded feed it could choke on (see docs/DESIGN.md §5.4.1).
 Makefile             drives everything from the repo root (see `make help`)
 cmd/library/         main: wires catalog + web + opds + ingest together
 internal/epub/       EPUB metadata, cover, ADEPT-DRM detection (zip + OPF, no deps)
+internal/comic/      CBZ reader + CBR->CBZ convert (pure-Go rardecode, no cgo)
 internal/catalog/    SQLite catalog: index, scan, prune, query (sorts by author>title)
 internal/opds/       OPDS 1.2 feed (paging enforced here)
 internal/web/        HTTP only: browser UI, reader, upload, file/cover, JSON API
-internal/ingest/     import watcher + DRM pipeline (fulfill -> decrypt -> index)
+internal/ingest/     import watcher + DRM/comic pipeline (fulfill/decrypt/convert -> index)
 internal/drm/        Go client that drives the sidecar
 internal/fileutil/   small shared filesystem helpers
 docker/              container stack (compose + Dockerfiles)
   docker-compose.yml two-service stack; paths are relative to docker/
   Dockerfile         Go service image (distroless, ~30 MB)
   sidecar/           Python DRM worker (worker.py) + CLI setup (setup.py)
-data/library/        clean EPUBs (the library); sorted by author then title in the UI
+data/library/        clean EPUBs + CBZ comics (the library); sorted by author then title
 data/covers/         extracted cover-image cache, keyed by slug (derived, safe to wipe)
-data/import/         drop or upload .acsm / .epub here -> pipeline -> library
-  import/work/       sidecar scratch (NOT watched)
+data/import/         drop or upload .acsm / .epub / .cbz / .cbr here -> pipeline -> library
+  import/work/       sidecar + CBR-convert scratch (NOT watched)
   import/done/       originals archived here on success
   import/failed/     originals here on failure, with a .log sibling
 secrets/             Adobe activation + .der key (gitignored, never committed)
@@ -141,24 +144,30 @@ rm`, so re-run it after recreating the machine).
 
 Three ways in; all converge on the same pipeline and catalog:
 
-- **Upload via the web UI**: the Import control on the library page accepts
-  `.acsm` or `.epub`. The file is staged atomically into `data/import/`.
+- **Upload via the web UI**: the dedicated import page (`/imports`, linked from
+  the library header) accepts `.acsm`, `.epub`, `.cbz`, or `.cbr`, and shows
+  live per-file progress over SSE. The file is staged atomically into
+  `data/import/`.
 - **Drop a file** into `data/import/` directly.
 - Either way, the watcher (fsnotify + a 5s polling fallback; the poll covers
   hosts where inotify events do not cross the bind mount, e.g. the macOS Podman
   VM) runs the right path:
 
-| Dropped/uploaded        | Pipeline                                            |
-|-------------------------|-----------------------------------------------------|
-| `.acsm` (Adobe loan)    | fulfill (Adobe) → ADEPT epub → decrypt → library    |
-| `.epub` with ADEPT DRM  | decrypt → library                                   |
-| `.epub`, DRM-free       | imported directly (sidecar never touched)           |
+| Dropped/uploaded        | Pipeline                                              |
+|-------------------------|-------------------------------------------------------|
+| `.acsm` (Adobe loan)    | fulfill (Adobe) → ADEPT epub → decrypt → library      |
+| `.epub` with ADEPT DRM  | decrypt → library                                     |
+| `.epub`, DRM-free       | imported directly (sidecar never touched)             |
+| `.cbz` comic            | imported directly (sidecar never touched)             |
+| `.cbr` comic            | converted to `.cbz` → library (sidecar never touched) |
 
-The clean epub is verified as parseable, named from its title (e.g.
-`Book Title.epub`), and indexed. Originals from the DRM path archive to
-`import/done/`; failures go to `import/failed/` with a `.log`. The sidecar scratch
-in `import/work/` is wiped after each job. **`.acsm` files are time-sensitive:**
-library loans carry an `<expiration>`; fulfill before then.
+The clean file is verified as parseable, named from its title (e.g.
+`Book Title.epub` / `Comic Title.cbz`), and indexed. Comics carry no DRM, so the
+sidecar is never touched; a `.cbr` is converted to a `.cbz` (pure-Go RAR
+extract + re-zip) and only the `.cbz` enters the library. Originals from the DRM
+and CBR paths archive to `import/done/`; failures go to `import/failed/` with a
+`.log`. The scratch in `import/work/` is wiped after each job. **`.acsm` files
+are time-sensitive:** library loans carry an `<expiration>`; fulfill before then.
 
 ### Removing books
 
@@ -174,21 +183,27 @@ make test            # go test ./...
 go test -race ./internal/ingest/ ./internal/catalog/   # concurrency-sensitive paths
 ```
 
-The suite is hermetic: it builds synthetic EPUBs (real zips with OPF) and temp
+The suite is hermetic: it builds synthetic EPUBs and CBZs (real zips) and temp
 SQLite DBs in-test, so it needs no fixtures, network, or running sidecar. Coverage
 focuses on the logic that has bitten us or that protects the device/data:
 
-- **catalog**: scan/index idempotency, **prune** of deleted files (incl. cascade
-  of join rows), author>title sort ordering, FTS search.
+- **catalog**: scan/index idempotency (epub + cbz), `format`-column migration,
+  **prune** of deleted files (incl. cascade of join rows), author>title sort, FTS.
 - **opds**: the paging invariant (protects memory-constrained clients): feeds
-  capped at `PageSize`, correct next/prev boundaries, root-is-navigation-only.
+  capped at `PageSize`, correct next/prev boundaries, root-is-navigation-only,
+  comic acquisition media type.
 - **epub**: metadata parse, ADEPT-DRM detection (incl. *not* flagging IDPF font
   obfuscation), identifier/scheme guessing.
+- **comic**: CBZ metadata + natural page-ordering (zero-padded, nested, scrambled),
+  ComicInfo.xml vs filename fallback, CBR->CBZ convert (real-RAR, ordering, fail-
+  clean; skip-guarded on the `rar` CLI).
 - **drm**: sidecar client against a mock server: success, non-epub rejection,
   error propagation, unreachable sidecar.
-- **web**: upload handler: extension rejection, atomic staging, form redirect.
-- **ingest / fileutil**: `uniquePath`, `importable`, the Create+Write dedupe,
-  cross-device move, filename sanitizing.
+- **web**: upload handler: extension rejection/acceptance (incl. `.cbz`), atomic
+  staging, form redirect; import status API + SSE stream.
+- **ingest / fileutil**: `uniquePath`, `importable` (incl. comic + dotfile skip),
+  the Create+Write dedupe, cross-device move, filename sanitizing, comic import
+  end-to-end.
 
 ## Status
 
@@ -200,7 +215,12 @@ Working and verified end-to-end via the compose stack:
   decrypted (ADEPT stripped, content confirmed readable), then indexed.
 - **Direct import**: a DRM-free epub imports without touching the sidecar;
   byte-identical duplicates are skipped.
-- **Web upload**: `.acsm`/`.epub` upload routes through the same pipeline.
+- **Comics**: `.cbz` imports directly and `.cbr` is converted to `.cbz` at import
+  (verified on a real 743 MB / 366-page CBR: lossless, correctly ordered); comics
+  catalog with covers, read in a built-in image-sequence viewer, and serve over
+  OPDS with the comic media type.
+- **Web upload**: `.acsm`/`.epub`/`.cbz`/`.cbr` upload routes through the same
+  pipeline, with live per-file progress on the `/imports` page (SSE).
 - **Browser UI**: grid + sortable table views (persisted), dark mode, clickable
   author search; covers cached to `data/covers` for fast grid loads.
 - **Library view** sorts by author, then title; "Recently Added" (OPDS) stays
@@ -212,7 +232,9 @@ Working and verified end-to-end via the compose stack:
 
 - **Browser reader**: `epub.js` + `jszip` are vendored under
   `internal/web/assets/vendor/` and embedded in the binary; the reader renders
-  books, persists reading position, and recolors for dark mode.
+  books, persists reading position, and recolors for dark mode. Comics use a
+  built-in, dependency-free image-sequence viewer (prev/next, fit width/height,
+  keyboard + tap paging, position persisted to the same read endpoint).
 
 - **Xteink X4**: verified against the real device, it browses the OPDS feed and
   downloads books over WiFi.

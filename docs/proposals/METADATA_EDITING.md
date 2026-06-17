@@ -2,7 +2,10 @@
 
 Status: **proposed, not implemented.** This guide is a design + build plan for
 in-browser metadata editing, kept deliberately lightweight (plain HTML forms,
-a few JSON endpoints, no new frontend dependencies, no epub-rewriting in v1).
+a few JSON endpoints, no new frontend dependencies, no file-rewriting in v1).
+Applies to both formats: the catalog row is format-neutral, so the v1
+DB-authoritative editor covers EPUBs and CBZ comics alike. Optional Phase 2
+write-back is format-specific (epub OPF, or a comic's `ComicInfo.xml`); see §7.
 
 ## 1. The core tension to resolve first
 
@@ -148,23 +151,43 @@ Covers are read live from the epub (`epub.CoverImage` on each `GET
 This keeps covers editable without touching the book file, consistent with the
 DB-authoritative model.
 
-## 7. Optional Phase 2: write-back to the epub
+## 7. Optional Phase 2: write-back to the file
 
 Only if/when the user wants edits embedded in the file itself (for export or
-reading on a device that reads OPF metadata):
+reading on a device that reads embedded metadata). Both formats follow the same
+shape: a deliberate `POST /book/{slug}/embed` action (never automatic), rewrite
+the archive to a temp file, validate it parses, atomically swap, and re-hash
+(which changes the slug, so update it and redirect; the slug change is the cost
+of embedding, surface it). The DB-authoritative editor (§1-6) is format-neutral
+and already covers comics; only this write-back step is format-specific.
 
-- A deliberate `POST /book/{slug}/embed` action (never automatic).
-- Open the epub zip, parse the OPF, replace the dc: elements + meta entries with
-  the catalog's current values, rewrite the cover if overridden, write a new zip,
-  atomically swap it in, and re-hash (which changes the slug, so update it and
-  redirect). The slug change is the cost of embedding; surface it.
-- This is the heavy, risky part: rewriting a zip can corrupt a book. Do it to a
-  temp file, validate it parses (`epub.Read`) before swapping, and keep the
-  original until the new one is verified. Treat it like the import pipeline's
-  "verify before commit" step.
+### EPUB: rewrite the OPF
 
-Defer this. The DB-authoritative editor (§1-6) delivers the feature; write-back is
-a power-user add-on.
+- Open the epub zip, parse the OPF, replace the `dc:` elements + meta entries
+  with the catalog's current values, rewrite the cover if overridden, write a new
+  zip.
+
+### CBZ (comic): write/replace `ComicInfo.xml`
+
+- This is *easier* than the epub path: there is no OPF to surgically edit, just a
+  single `ComicInfo.xml` at the archive root. Serialize the catalog's current
+  values into the ComicRack schema (`Title`, `Series`, `Number`, `Writer`,
+  `Summary`, `LanguageISO`, `Year`), and write the zip with that entry replaced
+  (or added if absent), copying the page images through unchanged.
+- `internal/comic` already *reads* `ComicInfo.xml`; this adds the writer side.
+  Keep it the same "verify before swap" discipline: re-`comic.Read` the rewritten
+  CBZ before swapping it in.
+- A nice property: rewriting only the `ComicInfo.xml` entry and store-copying the
+  (already-compressed) page images is cheap, so embedding a comic's metadata is
+  fast even for a large volume.
+
+Both are the heavy, risky part (rewriting a zip can corrupt a file). Do it to a
+temp file, validate it parses (`epub.Read` / `comic.Read`) before swapping, and
+keep the original until the new one is verified. Treat it like the import
+pipeline's "verify before commit" step.
+
+Defer this. The DB-authoritative editor (§1-6) delivers the feature for both
+formats; write-back is a power-user add-on.
 
 ## 8. Build order
 
@@ -174,7 +197,9 @@ a power-user add-on.
    survives and FTS reflects it.
 3. Edit form template + endpoints; the inline-save JS with form fallback.
 4. Cover override (dir + serve-override + upload endpoint).
-5. (Later) epub write-back, behind an explicit action, verify-before-swap.
+5. (Later) file write-back behind an explicit action, verify-before-swap:
+   epub OPF rewrite and CBZ `ComicInfo.xml` write/replace (the comic side reuses
+   `internal/comic`, which already reads ComicInfo.xml; this adds the writer).
 
 ## 9. Risks / notes
 

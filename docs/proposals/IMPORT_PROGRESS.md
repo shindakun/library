@@ -4,9 +4,9 @@ Status: **proposed, not implemented.** Design + build plan for surfacing import
 progress to the UI. Today imports are fire-and-forget (the watcher logs to
 stderr; the web layer has no job state). This adds a generic **import-job model**
 shared by every import path, a **live status stream (SSE)**, and a **dedicated
-import page** with progress. It is a prerequisite for comics, where CBR->CBZ
-conversion is a multi-minute operation that needs real feedback (see
-COMIC_SUPPORT.md).
+import page** with progress. It was a prerequisite for comics, where CBR->CBZ
+conversion is a multi-minute operation that needs real feedback (comics shipped
+on top of this; see the README).
 
 ## 1. Why now, and why generic
 
@@ -208,11 +208,10 @@ Move import off the library grid into its own page, cleaner and purpose-built:
    buffer), and the `failed`-job progress-zeroing assertion. Race-clean.
 
    NOTE: the actual `.cbr`/`.cbz` accept-filter, `sourceFor` classification, and
-   the `comic.Convert` step itself are intentionally NOT here: they live on the
-   comics branch (COMIC_SUPPORT.md). This branch delivers only the generic
-   progress infrastructure they plug into. (Corrects an earlier draft that
-   deferred this plumbing to the comics branch: keeping it generic and landing it
-   here is the whole point.)
+   the CBR-convert step itself are intentionally NOT here: they landed later with
+   comics. This branch delivered only the generic progress infrastructure they
+   plug into. (Corrects an earlier draft that deferred this plumbing to the comics
+   work: keeping it generic and landing it here was the whole point.)
 
 ## 7. Decisions / open questions
 
