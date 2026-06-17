@@ -339,9 +339,24 @@ func (s *Server) apiImportsStream(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-keepalive.C:
-			// Comment line keeps idle connections (and proxies) alive.
-			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
-				return
+			// Keep idle connections (and proxies) alive, and reconcile any
+			// in-flight job: the live stream coalesces/drops intermediate
+			// progress frames for a slow client, so re-emit the current state of
+			// non-terminal jobs here. The client upserts by id, so this only
+			// corrects a stale progress bar; it never re-adds a finished row.
+			sent := false
+			for _, job := range s.Jobs.Snapshot() {
+				if job.EndedAt.IsZero() {
+					if !writeSSE(w, job) {
+						return
+					}
+					sent = true
+				}
+			}
+			if !sent {
+				if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+					return
+				}
 			}
 			flusher.Flush()
 		}

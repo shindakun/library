@@ -99,8 +99,11 @@ handle(path):
 The sidecar jobs (fulfill/decrypt) are coarse-grained (the Python worker returns
 one result); they report step transitions, not a percent. The **CBR conversion is
 the one path with a real percentage** (pages extracted / total), which is exactly
-why the progress bar is worth building. The `drm.Client` and the future
-`comic.ConvertCBR` take an optional progress callback.
+why the progress bar is worth building. The progress callback that carries that
+fraction (`progressFunc(step, frac, detail)`) is implemented and generic on this
+branch (see §6 step 4); a future `comic.Convert` is just another caller of it. The
+fraction flows callback -> `j.Progress` -> SSE -> the `<progress>` element with no
+format-specific code in between.
 
 ## 4. HTTP surface (`internal/web`)
 
@@ -175,11 +178,36 @@ Move import off the library grid into its own page, cleaner and purpose-built:
    with the `job-list` mount and `imports.js`/`app.css` serving 200
    (`TestImportsPageServes`); JS behavior is for the user to confirm in-browser,
    per the project's frontend-verification convention.
-4. **Progress callback plumbing**: thread an `onProgress` through `pipeline()` and
-   the `drm.Client`; the sidecar steps report transitions. (CBR's real percentage
-   arrives with COMIC_SUPPORT.md.)
-5. Then return to comics: `comic.ConvertCBR` reports `pagesDone/total` into the
-   job, lighting up the progress bar end to end.
+4. **Generic fractional-progress plumbing** (DONE, on THIS branch): the progress
+   path is now generic enough that a long, fraction-reporting step (CBR->CBZ
+   conversion being the motivating one) lights up the bar with NO further changes
+   to the job model, the SSE layer, or the UI. The contract is the existing
+   `progressFunc(step string, frac float64, detail string)`: `handle()` builds one
+   `onProgress` that writes `j.Step/j.Progress/j.Detail` and broadcasts, and
+   `pipeline()` already receives it. A converter calls
+   `onProgress("converting", pagesDone/float64(total), "page 142/610")` in its
+   loop; the bar follows. Hardening done here so it survives the CBR frame rate:
+   - `Jobs.broadcast` now **coalesces to newest** on a full subscriber buffer
+     (evict oldest, enqueue newest) instead of dropping the newest. A slow client
+     during a hundreds-of-frames-per-second conversion converges on the current
+     fraction rather than stalling on a stale one, and the terminal frame is
+     never stranded behind a backlog of superseded progress.
+   - `Jobs.Finish` zeroes `Progress` on `failed`/`skipped` (and sets `1` on
+     `done`), so no consumer ever sees a stale "60% done" on a job that failed
+     mid-progress.
+   - The SSE keepalive tick re-emits the snapshot of any **non-terminal** job, a
+     belt-and-suspenders reconcile: a progress bar can be at most ~25s stale even
+     if a live frame was coalesced away, and finished rows are never re-sent.
+   Tests: `TestProgressStreamConvergesOnLatest` (500 frames, slow drain, ends at
+   1.0), `TestTerminalFrameSurvivesFullBuffer` (terminal survives a saturated
+   buffer), and the `failed`-job progress-zeroing assertion. Race-clean.
+
+   NOTE: the actual `.cbr`/`.cbz` accept-filter, `sourceFor` classification, and
+   the `comic.Convert` step itself are intentionally NOT here: they live on the
+   comics branch (COMIC_SUPPORT.md). This branch delivers only the generic
+   progress infrastructure they plug into. (Corrects an earlier draft that
+   deferred this plumbing to the comics branch: keeping it generic and landing it
+   here is the whole point.)
 
 ## 7. Decisions / open questions
 

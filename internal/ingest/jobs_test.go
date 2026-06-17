@@ -37,6 +37,9 @@ func TestJobLifecycle(t *testing.T) {
 func TestJobFinishFailedAndSkipped(t *testing.T) {
 	j := newJobs()
 	fid := j.Start("bad.acsm", "acsm")
+	// A failure can arrive mid-progress; the terminal frame must zero it so no
+	// consumer sees a stale "60% done" on a failed job.
+	j.Update(fid, func(jb *Job) { jb.Progress = 0.6 })
 	j.Finish(fid, StateFailed, "fulfill: expired", "")
 	sid := j.Start("dup.epub", "epub")
 	j.Finish(sid, StateSkipped, "already in the library", "")
@@ -47,6 +50,9 @@ func TestJobFinishFailedAndSkipped(t *testing.T) {
 	}
 	if snap[0].State != StateFailed || snap[0].Err != "fulfill: expired" {
 		t.Errorf("failed job = %+v", snap[0])
+	}
+	if snap[0].Progress != 0 {
+		t.Errorf("failed job kept stale progress %v, want 0", snap[0].Progress)
 	}
 	if snap[1].State != StateSkipped {
 		t.Errorf("skipped job = %+v", snap[1])
@@ -123,6 +129,79 @@ func TestSlowSubscriberDoesNotBlock(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Start blocked on a slow subscriber")
+	}
+}
+
+// TestProgressStreamConvergesOnLatest models the CBR case: a long conversion
+// emits many fractional progress frames in a tight loop. A subscriber that
+// drains slowly must end up seeing the LATEST fraction (the stream coalesces to
+// newest on a full buffer), not stall on a stale early one.
+func TestProgressStreamConvergesOnLatest(t *testing.T) {
+	j := newJobs()
+	ch, unsub := j.Subscribe()
+	defer unsub()
+
+	id := j.Start("big.cbr", "cbr")
+	const frames = 500 // far exceeds the 64 buffer, forcing coalescing
+	for i := 1; i <= frames; i++ {
+		frac := float64(i) / float64(frames)
+		j.Update(id, func(jb *Job) {
+			jb.Step = "converting"
+			jb.Progress = frac
+			jb.Detail = "page"
+		})
+	}
+
+	// Drain everything currently buffered; the last frame read must be the most
+	// recent state we produced (Progress == 1.0), proving no permanent stall.
+	var last *Job
+	draining := true
+	for draining {
+		select {
+		case jb := <-ch:
+			last = jb
+		default:
+			draining = false
+		}
+	}
+	if last == nil {
+		t.Fatal("subscriber received nothing")
+	}
+	if last.Progress != 1.0 {
+		t.Errorf("latest delivered progress = %v, want 1.0 (stream did not converge)", last.Progress)
+	}
+}
+
+// TestTerminalFrameSurvivesFullBuffer guarantees the invariant the UI depends
+// on: even when a slow subscriber's buffer is saturated with progress frames,
+// the terminal (done/failed/skipped) frame is never dropped, so a row can never
+// be left stuck mid-progress.
+func TestTerminalFrameSurvivesFullBuffer(t *testing.T) {
+	j := newJobs()
+	ch, unsub := j.Subscribe()
+	defer unsub()
+
+	id := j.Start("big.cbr", "cbr")
+	for i := 0; i < 300; i++ { // saturate the buffer with intermediate frames
+		j.Update(id, func(jb *Job) { jb.Step = "converting"; jb.Progress = 0.5 })
+	}
+	j.Finish(id, StateDone, "", "abc123")
+
+	// The terminal frame must be somewhere in the delivered stream.
+	sawTerminal := false
+	draining := true
+	for draining {
+		select {
+		case jb := <-ch:
+			if jb.State == StateDone && jb.BookSlug == "abc123" {
+				sawTerminal = true
+			}
+		default:
+			draining = false
+		}
+	}
+	if !sawTerminal {
+		t.Error("terminal frame was dropped under a saturated buffer")
 	}
 }
 

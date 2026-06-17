@@ -126,8 +126,13 @@ func (j *Jobs) Finish(id string, state JobState, errMsg, slug string) {
 	jb.EndedAt = j.now()
 	jb.Step = ""
 	jb.Detail = ""
+	// Terminal progress is unambiguous: a finished job is fully done (1) or no
+	// longer progressing at all (0). Leaving a stale mid-run fraction on a
+	// failed/skipped job would misreport it to any /api/imports consumer.
 	if state == StateDone {
 		jb.Progress = 1
+	} else {
+		jb.Progress = 0
 	}
 	jb.Err = errMsg
 	jb.BookSlug = slug
@@ -179,8 +184,22 @@ func (j *Jobs) broadcast(jb *Job) {
 	for ch := range j.subs {
 		select {
 		case ch <- jb:
+			continue
 		default:
-			// Slow subscriber: drop this update. It can resync via Snapshot.
+		}
+		// Buffer full: coalesce to newest. Evict the OLDEST pending frame and
+		// enqueue this one. A slow client (e.g. mid-CBR-conversion, hundreds of
+		// progress frames a second) thus always trends toward the latest state
+		// instead of stalling on stale frames, and the terminal frame is never
+		// lost behind a backlog of superseded progress. The client upserts by
+		// job id, so dropping a superseded intermediate frame is invisible.
+		select {
+		case <-ch: // discard one stale frame to make room
+		default:
+		}
+		select {
+		case ch <- jb:
+		default: // a concurrent reader already refilled it; it has fresh data
 		}
 	}
 }
