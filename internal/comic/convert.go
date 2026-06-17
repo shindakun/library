@@ -49,27 +49,23 @@ func ConvertCBR(srcPath, dstPath string, onProgress func(done, total int)) (err 
 	}()
 	zw := zip.NewWriter(out)
 
-	// Second pass: extract each image and write it into the CBZ. We write entries
-	// in natural reading order, so we buffer by index. A comic's pages fit in
-	// memory one at a time; we hold at most the whole set of names but stream each
-	// page's bytes straight into the zip as we encounter it, then fix order by
-	// writing into a pre-sorted set of zip entries.
-	//
-	// Simpler and correct: collect (index, bytes) as we read, then write sorted.
-	// Pages are images; a volume is bounded, and this runs once at import.
-	type page struct {
-		idx  int
-		name string
-		data []byte
-	}
-	pages := make([]page, 0, len(names))
-
+	// Second pass: extract each image and STREAM it straight into the CBZ, one
+	// page at a time (no buffering all pages in memory: a large comic is hundreds
+	// of MB decompressed). Each page is named by its precomputed reading-order
+	// index (zero-padded), so the output sorts into reading order on read even
+	// though we write entries in the archive's order. Progress is reported per
+	// page as it is fully written, so the bar tracks the real work (read+write),
+	// not just the read.
+	width := len(fmt.Sprintf("%d", len(names)))
 	rc, err := rardecode.OpenReader(srcPath)
 	if err != nil {
 		return fmt.Errorf("open cbr: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
 
+	// The page images store essentially no better under deflate (JPEG/PNG are
+	// already compressed), so store them uncompressed: far faster and avoids
+	// burning CPU re-compressing incompressible data on a big volume.
 	done := 0
 	for {
 		hdr, nerr := rc.Next()
@@ -86,29 +82,17 @@ func ConvertCBR(srcPath, dstPath string, onProgress func(done, total int)) (err 
 		if !ok {
 			continue // non-image entry (or a dir); skip, matching pageList
 		}
-		data, rerr := io.ReadAll(rc)
-		if rerr != nil {
-			return fmt.Errorf("extract %q: %w", hdr.Name, rerr)
-		}
-		pages = append(pages, page{idx: idx, name: hdr.Name, data: data})
-		done++
-		if onProgress != nil {
-			onProgress(done, len(names))
-		}
-	}
-
-	// Write pages into the CBZ in reading order, flattening any directory
-	// structure to a zero-padded sequential name so the result sorts trivially.
-	sort.Slice(pages, func(i, j int) bool { return pages[i].idx < pages[j].idx })
-	width := len(fmt.Sprintf("%d", len(pages)))
-	for seq, p := range pages {
-		name := fmt.Sprintf("%0*d%s", width, seq+1, strings.ToLower(path.Ext(p.name)))
-		w, werr := zw.Create(name)
+		name := fmt.Sprintf("%0*d%s", width, idx+1, strings.ToLower(path.Ext(hdr.Name)))
+		w, werr := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
 		if werr != nil {
 			return werr
 		}
-		if _, werr := w.Write(p.data); werr != nil {
-			return werr
+		if _, werr := io.Copy(w, rc); werr != nil {
+			return fmt.Errorf("extract %q: %w", hdr.Name, werr)
+		}
+		done++
+		if onProgress != nil {
+			onProgress(done, len(names))
 		}
 	}
 
