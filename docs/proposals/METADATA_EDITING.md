@@ -245,6 +245,28 @@ The safe method is **surgical text editing of the raw OPF bytes**:
   edited safely, FAIL the embed (keep the original + DB edit) rather than risk a
   corrupt book.
 
+**Confirmed against real epubs on disk (step 3b):**
+
+- The OPF path varies (`OEBPS/content.opf`, a publisher-specific name, ...): get
+  it from `container.xml` (the parser's `findOPFPath` already does), never assume.
+- `dc:` is the common literal prefix, but elements carry attributes that MUST be
+  preserved when only the text changes: `<dc:creator id="author_0">`,
+  `<dc:creator opf:file-as="..." opf:role="aut">`, `<dc:identifier
+  opf:scheme="ISBN">`, `<dc:date opf:event="publication">`. So for single-valued
+  fields, replace only the element's inner TEXT, keeping the open tag (and its
+  attributes) intact. Indentation/whitespace also varies (tabs vs spaces).
+- Multi-valued elements: `<dc:creator>` (authors) and `<dc:subject>` repeat.
+  Editing authors = remove ALL existing `<dc:creator>` elements, then insert one
+  plain `<dc:creator>name</dc:creator>` per edited author. The file-as/role attrs
+  are dropped on an explicit author edit (acceptable: the user changed authors).
+- v1 scope: title, language, publisher, description, date (single-valued, text
+  replace or insert-before-`</metadata>`) and creators (authors; remove-all +
+  re-insert). Identifiers/subjects are left as-is in the file in v1 (the DB still
+  carries edited identifiers; embedding them is a later refinement).
+- The matcher is tag-name + namespace-prefix aware but tolerant of attributes and
+  whitespace; anything it can't confidently edit -> FAIL the embed (DB edit
+  survives). Re-`epub.Read` the rewritten file before the caller swaps it in.
+
 ### CBZ (comic): write/replace `ComicInfo.xml`
 
 - This is *easier* than the epub path: there is no OPF to surgically edit, just a
