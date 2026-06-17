@@ -43,6 +43,16 @@ type Book struct {
 	Source      string
 	Format      string // "epub" | "cbz"; how to parse/serve this book
 	Identifiers map[string]string
+
+	// SlugOverride, when set, is the book's stable public id, captured at import
+	// from the content-hash slug. It keeps the URL/OPDS identity fixed even after
+	// a metadata edit rewrites the file (which changes FileHash). Empty for rows
+	// imported before this existed (Slug falls back to the hash).
+	SlugOverride string
+	// EditedFields is the JSON-encoded list of columns the user hand-edited, so
+	// scan won't overwrite them from the file. EditedAt is the last-edit time.
+	EditedFields string
+	EditedAt     time.Time
 }
 
 // Slug is the stable public identifier for a book, derived from its content
@@ -51,10 +61,25 @@ type Book struct {
 // slug, so a book's URL survives DB rebuilds, library moves, and re-imports.
 // 16 hex chars (64 bits) is collision-safe for a personal library.
 func (b *Book) Slug() string {
+	// A stable override (set at import) wins, so the public id survives file
+	// rewrites from metadata edits that change the content hash.
+	if b.SlugOverride != "" {
+		return b.SlugOverride
+	}
 	if len(b.FileHash) >= 16 {
 		return b.FileHash[:16]
 	}
 	return b.FileHash
+}
+
+// hashSlug is the content-hash-derived slug (first 16 hex of the file hash). It
+// is what SlugOverride is seeded with at import; kept as a helper so import and
+// any backfill agree on the derivation.
+func hashSlug(fileHash string) string {
+	if len(fileHash) >= 16 {
+		return fileHash[:16]
+	}
+	return fileHash
 }
 
 // Catalog owns the DB handle and the books root directory.
@@ -217,6 +242,23 @@ func (c *Catalog) migrate() error {
 	if err := c.addColumnIfMissing("books", "format", "TEXT NOT NULL DEFAULT 'epub'"); err != nil {
 		return err
 	}
+	if err := c.addColumnIfMissing("books", "edited_fields", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := c.addColumnIfMissing("books", "edited_at", "INTEGER"); err != nil {
+		return err
+	}
+	if err := c.addColumnIfMissing("books", "slug_override", "TEXT"); err != nil {
+		return err
+	}
+	// Backfill slug_override for rows imported before it existed, to their current
+	// content-hash slug, so their public id is pinned now (before any edit can
+	// rewrite the file and change the hash). Idempotent: only touches NULLs.
+	if _, err := c.db.Exec(
+		`UPDATE books SET slug_override = substr(file_hash, 1, 16)
+		 WHERE slug_override IS NULL AND file_hash IS NOT NULL AND file_hash <> ''`); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -335,11 +377,11 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 	} else {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO books (title, sort_title, path, file_size, file_hash,
-			    language, publisher, description, published, has_cover, added_at, source, format)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			    language, publisher, description, published, has_cover, added_at, source, format, slug_override)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			meta.Title, sortTitle, rel, size, hash,
 			meta.Language, meta.Publisher, meta.Description, meta.Published,
-			meta.HasCover, now, source, format)
+			meta.HasCover, now, source, format, hashSlug(hash))
 		if err != nil {
 			return 0, err
 		}
@@ -605,9 +647,11 @@ func (c *Catalog) GetBySlug(ctx context.Context, slug string) (*Book, error) {
 		return nil, sql.ErrNoRows
 	}
 	var id int64
-	// Match on the hash prefix; the slug is the first 16 hex chars of file_hash.
+	// Prefer the stable slug_override (the public id that survives file rewrites);
+	// fall back to the hash prefix for rows imported before slug_override existed.
 	err := c.db.QueryRowContext(ctx,
-		`SELECT id FROM books WHERE file_hash LIKE ? || '%' LIMIT 1`, slug).Scan(&id)
+		`SELECT id FROM books WHERE slug_override = ? OR (slug_override IS NULL AND file_hash LIKE ? || '%') LIMIT 1`,
+		slug, slug).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, sql.ErrNoRows
 	}
@@ -642,17 +686,26 @@ func (c *Catalog) loadBooks(ctx context.Context, ids []int64) ([]*Book, error) {
 	for _, id := range ids {
 		var b Book
 		var added int64
+		var slugOverride, editedFields sql.NullString
+		var editedAt sql.NullInt64
 		err := c.db.QueryRowContext(ctx, `
 			SELECT id, title, sort_title, language, publisher, description,
-			       published, path, file_size, file_hash, has_cover, added_at, source, format
+			       published, path, file_size, file_hash, has_cover, added_at, source, format,
+			       slug_override, edited_fields, edited_at
 			FROM books WHERE id=?`, id).Scan(
 			&b.ID, &b.Title, &b.SortTitle, &b.Language, &b.Publisher, &b.Description,
-			&b.Published, &b.Path, &b.FileSize, &b.FileHash, &b.HasCover, &added, &b.Source, &b.Format)
+			&b.Published, &b.Path, &b.FileSize, &b.FileHash, &b.HasCover, &added, &b.Source, &b.Format,
+			&slugOverride, &editedFields, &editedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return nil, err
+		}
+		b.SlugOverride = slugOverride.String
+		b.EditedFields = editedFields.String
+		if editedAt.Valid {
+			b.EditedAt = time.Unix(editedAt.Int64, 0)
 		}
 		b.AddedAt = time.Unix(added, 0)
 		b.Identifiers = map[string]string{}

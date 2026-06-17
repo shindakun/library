@@ -47,7 +47,7 @@ func TestMigrateAddsFormatColumnToOldDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO books (title, path, added_at) VALUES ('Old Book','a/b.epub',1)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO books (title, path, file_hash, added_at) VALUES ('Old Book','a/b.epub','0123456789abcdef0000',1)`); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.Close()
@@ -67,10 +67,60 @@ func TestMigrateAddsFormatColumnToOldDB(t *testing.T) {
 		t.Errorf("backfilled format = %q, want epub", format)
 	}
 
+	// slug_override must be backfilled to the content-hash slug (first 16 hex),
+	// so the row's public id is pinned before any edit can rewrite the file.
+	var slugOverride string
+	if err := c.db.QueryRow(`SELECT slug_override FROM books WHERE path='a/b.epub'`).Scan(&slugOverride); err != nil {
+		t.Fatalf("slug_override not queryable after migrate: %v", err)
+	}
+	if slugOverride != "0123456789abcdef" {
+		t.Errorf("backfilled slug_override = %q, want 0123456789abcdef", slugOverride)
+	}
+
 	// Idempotent: running migrate again (as the next startup would) must not error
 	// with a duplicate-column failure.
 	if err := c.migrate(); err != nil {
 		t.Errorf("second migrate() failed (not idempotent): %v", err)
+	}
+}
+
+// TestSlugStableAcrossHashChange verifies the slug comes from slug_override and
+// does not move when the file content (hash) changes, which is what a metadata
+// embed will do. This is the invariant that keeps URLs/OPDS ids stable on edit.
+func TestSlugStableAcrossHashChange(t *testing.T) {
+	c, books := newTestCatalog(t)
+	p := makeEPUB(t, books, "a.epub", "Alpha", "Author One")
+	id, err := c.Index(context.Background(), p, "scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug := b.Slug()
+	if slug == "" || b.SlugOverride == "" {
+		t.Fatalf("expected a slug_override at import; got slug=%q override=%q", slug, b.SlugOverride)
+	}
+	// Resolve by slug works.
+	if _, err := c.GetBySlug(context.Background(), slug); err != nil {
+		t.Fatalf("GetBySlug(%q): %v", slug, err)
+	}
+
+	// Simulate an embed rewriting the file: change the stored hash (NOT the
+	// override). The slug must not move, and GetBySlug must still resolve it.
+	if _, err := c.db.Exec(`UPDATE books SET file_hash=? WHERE id=?`, "ffffffffffffffffdead", id); err != nil {
+		t.Fatal(err)
+	}
+	b2, err := c.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b2.Slug() != slug {
+		t.Errorf("slug changed after hash change: %q -> %q", slug, b2.Slug())
+	}
+	if got, err := c.GetBySlug(context.Background(), slug); err != nil || got.ID != id {
+		t.Errorf("GetBySlug(%q) after hash change: id=%v err=%v, want id=%d", slug, got, err, id)
 	}
 }
 

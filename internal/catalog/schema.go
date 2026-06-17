@@ -15,7 +15,12 @@ CREATE TABLE IF NOT EXISTS books (
   has_cover   INTEGER NOT NULL DEFAULT 0,
   added_at    INTEGER NOT NULL,
   source      TEXT,
-  format      TEXT NOT NULL DEFAULT 'epub'
+  format      TEXT NOT NULL DEFAULT 'epub',
+  -- Metadata editing: which columns the user hand-edited (JSON array), when, and
+  -- a stable public slug that survives file rewrites (set once at import).
+  edited_fields TEXT NOT NULL DEFAULT '',
+  edited_at     INTEGER,
+  slug_override TEXT
 );
 
 CREATE TABLE IF NOT EXISTS authors (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
