@@ -233,3 +233,90 @@ func TestCoverOverrideWinsAndRejectsNonImage(t *testing.T) {
 		t.Error("override was wiped/overwritten by a rescan")
 	}
 }
+
+// TestDeleteBookRemovesRowFileAndCover is the delete end-to-end: DELETE removes
+// the catalog row, the file on disk, and any cover override, and the book is gone
+// from listings (and stays gone after a rescan).
+func TestDeleteBookRemovesRowFileAndCover(t *testing.T) {
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	lib := libraryDir(t, s)
+	abs := writeLibraryEPUB(t, lib, "Auth/Book.epub", "Book", "Auth")
+	_, _ = s.Cat.Scan(context.Background())
+	books, _ := s.Cat.List(context.Background(), catalog.ListOptions{})
+	if len(books) != 1 {
+		t.Fatalf("want 1 book, got %d", len(books))
+	}
+	slug := books[0].Slug()
+
+	// Give it a cover override so we can confirm that's cleaned up too.
+	if _, err := os.Stat(abs); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Cat.SetCoverOverride(context.Background(), books[0], tinyPNGBytes, "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Cat.CoverOverridePath(books[0]) == "" {
+		t.Fatal("override not set up")
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/books/"+slug, nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Row gone.
+	if _, err := s.Cat.GetBySlug(context.Background(), slug); err == nil {
+		t.Error("catalog row still present after delete")
+	}
+	// File gone.
+	if _, err := os.Stat(abs); !os.IsNotExist(err) {
+		t.Errorf("book file still on disk after delete: %v", err)
+	}
+	// Override gone.
+	if s.Cat.CoverOverridePath(books[0]) != "" {
+		t.Error("cover override not cleaned up")
+	}
+	// Stays gone after a rescan (file removed, so nothing to re-import).
+	_, _ = s.Cat.Scan(context.Background())
+	if got, _ := s.Cat.List(context.Background(), catalog.ListOptions{}); len(got) != 0 {
+		t.Errorf("book reappeared after rescan: %d", len(got))
+	}
+}
+
+// TestDeleteMissingBookIs404 confirms an unknown slug deletes to a clean 404.
+func TestDeleteMissingBookIs404(t *testing.T) {
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/books/deadbeefdeadbeef", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("delete unknown slug: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestIndexRendersBookMenu verifies the grid renders the three-dot actions menu
+// (Edit + Delete) for each book, not a bare edit link.
+func TestIndexRendersBookMenu(t *testing.T) {
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+	writeLibraryEPUB(t, libraryDir(t, s), "A/B.epub", "B", "A")
+	_, _ = s.Cat.Scan(context.Background())
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`class="book-menu"`, `class="menu-delete"`, `/edit"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index missing %q", want)
+		}
+	}
+}

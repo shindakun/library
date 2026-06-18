@@ -60,7 +60,13 @@
       <span class="t">{{.Title}}</span>
     </a>
     <div class="a">{{range $i,$a := .Authors}}{{if $i}}, {{end}}<a class="author" href="/?q={{$a | urlquery}}">{{$a}}</a>{{end}}</div>
-    <a class="edit-link" href="/book/{{.Slug}}/edit">Edit</a>
+    <div class="book-menu" data-slug="{{.Slug}}" data-title="{{.Title}}">
+      <button type="button" class="menu-btn" aria-label="Book actions" aria-haspopup="true" aria-expanded="false">&#8943;</button>
+      <div class="menu-pop" role="menu" hidden>
+        <a role="menuitem" href="/book/{{.Slug}}/edit">Edit</a>
+        <button type="button" role="menuitem" class="menu-delete">Delete</button>
+      </div>
+    </div>
   </div>
   {{end}}
 </div>

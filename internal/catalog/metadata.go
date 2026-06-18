@@ -307,14 +307,21 @@ func replaceJoin(ctx context.Context, tx *sql.Tx, bookID int64, joinTable, fk, n
 // which the new terms are inserted. Passing the correct old values is what keeps
 // stale terms (e.g. a pre-edit title) from lingering in search.
 func ftsReplace(ctx context.Context, tx *sql.Tx, rowid int64, oldTitle, oldAuthors, oldDesc, newTitle, newAuthors, newDesc string) error {
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO books_fts (books_fts, rowid, title, authors, description) VALUES ('delete', ?, ?, ?, ?)`,
-		rowid, oldTitle, oldAuthors, oldDesc); err != nil {
+	if err := ftsDelete(ctx, tx, rowid, oldTitle, oldAuthors, oldDesc); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO books_fts (rowid, title, authors, description) VALUES (?,?,?,?)`,
 		rowid, newTitle, newAuthors, newDesc)
+	return err
+}
+
+// ftsDelete removes a rowid from the contentless books_fts index using the
+// special 'delete' command, which requires the row's current column values.
+func ftsDelete(ctx context.Context, tx *sql.Tx, rowid int64, title, authors, desc string) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO books_fts (books_fts, rowid, title, authors, description) VALUES ('delete', ?, ?, ?, ?)`,
+		rowid, title, authors, desc)
 	return err
 }
 

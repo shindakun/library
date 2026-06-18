@@ -277,6 +277,54 @@ func (c *Catalog) SetCoverOverride(ctx context.Context, b *Book, data []byte, mi
 	return nil
 }
 
+// DeleteBook removes a book entirely: its catalog row (and join/FTS rows via
+// cascade + an explicit contentless-FTS delete), the file on disk, any cover
+// cache + override, and a now-empty author directory. Irreversible. Returns
+// sql.ErrNoRows if the slug is unknown.
+func (c *Catalog) DeleteBook(ctx context.Context, slug string) error {
+	b, err := c.GetBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+
+	// Remove the file first; if this fails we keep the row so the book is not
+	// orphaned (a row pointing at a deleted file vs. a file with no row, the
+	// latter would be silently re-imported on the next scan).
+	abs := c.AbsPath(b)
+	if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove book file: %w", err)
+	}
+
+	// Drop the DB row. ON DELETE CASCADE clears the join tables; the contentless
+	// FTS index needs an explicit 'delete' carrying the old values.
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := ftsDelete(ctx, tx, b.ID, b.Title, strings.Join(b.Authors, " "), b.Description); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM books WHERE id=?`, b.ID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Best-effort cleanup of derived files (failures here don't fail the delete).
+	if c.coversDir != "" {
+		for _, ext := range []string{".jpg", ".png", ".gif", ".svg"} {
+			_ = os.Remove(filepath.Join(c.coversDir, b.Slug()+ext))
+			_ = os.Remove(filepath.Join(c.overridesDir(), b.Slug()+ext))
+		}
+	}
+	if dir := filepath.Dir(abs); dir != c.libraryRoot {
+		_ = os.Remove(dir) // no-op if the author dir still holds other books
+	}
+	return nil
+}
+
 func (c *Catalog) Close() error { return c.db.Close() }
 
 func (c *Catalog) migrate() error {

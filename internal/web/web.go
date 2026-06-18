@@ -67,6 +67,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/books/{slug}/read", s.apiSaveRead)
 	mux.HandleFunc("GET /book/{slug}/edit", s.editForm)
 	mux.HandleFunc("PUT /api/books/{slug}", s.apiUpdateBook)
+	mux.HandleFunc("DELETE /api/books/{slug}", s.apiDeleteBook)
 	mux.HandleFunc("POST /book/{slug}/edit", s.editFormPost)
 	mux.HandleFunc("PUT /book/{slug}/cover", s.apiSetCover)
 	mux.HandleFunc("POST /api/scan", s.apiScan)

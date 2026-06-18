@@ -191,6 +191,16 @@ func (s *Server) startEmbedJob(b *catalog.Book) string {
 	return jobID
 }
 
+// apiDeleteBook removes a book entirely (catalog row, file, cover). Irreversible;
+// the UI gates it behind a confirm().
+func (s *Server) apiDeleteBook(w http.ResponseWriter, r *http.Request) {
+	if err := s.Cat.DeleteBook(r.Context(), r.PathValue("slug")); err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // editFormPost is the no-JS fallback: a plain HTML form post. It applies the
 // same edit + embed, then redirects back to the library.
 func (s *Server) editFormPost(w http.ResponseWriter, r *http.Request) {

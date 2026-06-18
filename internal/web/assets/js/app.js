@@ -62,6 +62,65 @@ function sortTable(key) {
   });
 }
 
+// Per-book three-dot menu (Edit / Delete) on the grid cards.
+function wireBookMenus() {
+  function closeAll(except) {
+    document.querySelectorAll(".book-menu .menu-pop").forEach(function (pop) {
+      if (pop !== except) {
+        pop.hidden = true;
+        const btn = pop.parentElement.querySelector(".menu-btn");
+        if (btn) btn.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
+  document.querySelectorAll(".book-menu").forEach(function (menu) {
+    const btn = menu.querySelector(".menu-btn");
+    const pop = menu.querySelector(".menu-pop");
+    const del = menu.querySelector(".menu-delete");
+    if (!btn || !pop) return;
+
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      const willOpen = pop.hidden;
+      closeAll(willOpen ? pop : null);
+      pop.hidden = !willOpen;
+      btn.setAttribute("aria-expanded", String(willOpen));
+    });
+
+    if (del) {
+      del.addEventListener("click", function () {
+        const slug = menu.getAttribute("data-slug");
+        const title = menu.getAttribute("data-title") || "this book";
+        if (!window.confirm('Delete "' + title + '"? This removes the file from the library.')) return;
+        del.disabled = true;
+        fetch("/api/books/" + encodeURIComponent(slug), { method: "DELETE" })
+          .then(function (resp) {
+            if (!resp.ok && resp.status !== 204) throw new Error("delete failed (" + resp.status + ")");
+            // Remove the card from the grid (and its table row if present).
+            const card = menu.closest(".card");
+            if (card) card.remove();
+            const row = document.querySelector('#books-table tr [data-slug="' + slug + '"]');
+            if (row) {
+              const tr = row.closest("tr");
+              if (tr) tr.remove();
+            }
+          })
+          .catch(function (err) {
+            del.disabled = false;
+            alert(err.message || "Delete failed.");
+          });
+      });
+    }
+  });
+
+  // Click-away and Escape close any open menu.
+  document.addEventListener("click", function () { closeAll(null); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeAll(null);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   syncThemeButton();
   // Restore the persisted view now that <body> exists.
@@ -70,4 +129,5 @@ document.addEventListener("DOMContentLoaded", function () {
   syncViewButton();
   document.querySelectorAll("#books-table th").forEach(th =>
     th.addEventListener("click", () => sortTable(th.getAttribute("data-key"))));
+  wireBookMenus();
 });

@@ -268,6 +268,18 @@ This keeps covers editable without touching the book file, consistent with the
 DB-authoritative model. The override is keyed on the stable slug, so an embed that
 rewrites the file (changing its hash) does not orphan the override.
 
+### 6b. Delete (added with the edit UI)
+
+The grid's per-book affordance is a three-dot menu with **Edit** and **Delete**.
+Delete is a full, irreversible removal: `DELETE /api/books/{slug}` calls
+`catalog.DeleteBook`, which removes the file from `data/library/`, the catalog row
+(join rows cascade; the contentless FTS row is removed with the `'delete'`
+command via `ftsDelete`), any cover cache + override, and a now-empty author
+directory. The file is removed FIRST: if that fails the row is kept, so we never
+leave a fileless row, and a row-less file would just be re-imported on the next
+scan. The UI gates it behind a native `confirm()`. Removing the file (not just the
+row) is what keeps a deleted book from reappearing on the next scan.
+
 ## 7. Write-back: embedding edits into the file
 
 Part of the default edit flow (not deferred): after the DB edit lands, embed it
