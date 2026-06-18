@@ -211,11 +211,18 @@ not now.
   stable slug), but `file_hash`/`file_size` must be refreshed or a later scan
   sees a "changed" file and re-indexes (harmless but wasteful, and would re-run
   edit-protection). Update both in the same statement as `path`.
-- **Embed is best-effort and decoupled from the DB edit.** `PUT /api/books/{slug}`
-  always does the DB `UpdateMetadata` first (that is the durable change), then
-  attempts `EmbedMetadata`; the response reports embed status
-  (`embedded: true|false` + a reason) so the UI can show "saved, not yet embedded
-  in file" without the edit being lost. A failed embed never 500s the request.
+- **Embed is best-effort, decoupled from the DB edit, AND asynchronous.**
+  `PUT /api/books/{slug}` does the DB `UpdateMetadata` synchronously (fast), then
+  runs `EmbedMetadata` in a BACKGROUND goroutine and returns immediately with the
+  updated book + a `jobId`. Embedding a large comic re-zips every page (hundreds
+  of MB), which would block the request for many seconds and read as a hang, so
+  it must not be synchronous. The background embed reports into the existing
+  import-job registry (`ingest.Jobs`), and the edit page follows it on the
+  existing `/api/imports/stream` SSE feed: a progress bar driven by
+  `WriteComicInfo`'s new `onProgress(done, total)` callback (threaded through
+  `EmbedMetadata`). Terminal state maps to done / skipped (not embedded, DB edit
+  stands) / failed. The background goroutine uses `context.Background()`, not the
+  request context, since the response returns first. A failed embed never 500s.
 - **Edge sanitization + parsing.** The handler parses authors/tags from
   comma-separated input, rejects an over-large body, and validates the JSON shape;
   the catalog sanitizes again (it does not trust the caller). The slug in the URL

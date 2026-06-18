@@ -35,7 +35,9 @@ type comicInfoOut struct {
 //
 // dstPath must differ from srcPath (write to a temp file, then the caller
 // verifies and swaps). On any error dstPath is removed so no partial file remains.
-func WriteComicInfo(srcPath, dstPath string, m Metadata) (err error) {
+// onProgress, if non-nil, is called as each entry is copied through (done/total),
+// so a slow rewrite of a large comic can drive a progress bar.
+func WriteComicInfo(srcPath, dstPath string, m Metadata, onProgress func(done, total int)) (err error) {
 	zr, err := zip.OpenReader(srcPath)
 	if err != nil {
 		return fmt.Errorf("open cbz: %w", err)
@@ -54,9 +56,15 @@ func WriteComicInfo(srcPath, dstPath string, m Metadata) (err error) {
 	}()
 	zw := zip.NewWriter(out)
 
+	total := len(zr.File)
+	done := 0
 	// Copy every entry except an existing ComicInfo.xml, preserving each entry's
 	// original compression method and metadata (CreateHeader copies the header).
 	for _, f := range zr.File {
+		done++
+		if onProgress != nil {
+			onProgress(done, total)
+		}
 		if strings.EqualFold(path.Base(f.Name), "ComicInfo.xml") {
 			continue // drop the old one; we write a fresh one below
 		}

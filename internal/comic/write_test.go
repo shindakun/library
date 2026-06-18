@@ -48,7 +48,7 @@ func TestWriteComicInfoAddsWhenAbsent(t *testing.T) {
 		Series:    "Caper",
 		Language:  "en",
 		Published: "2021",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestWriteComicInfoReplacesExisting(t *testing.T) {
 	origPage, _ := readZipEntry(t, src, "01.jpg")
 
 	dst := filepath.Join(dir, "out.cbz")
-	if err := WriteComicInfo(src, dst, Metadata{Title: "New Title"}); err != nil {
+	if err := WriteComicInfo(src, dst, Metadata{Title: "New Title"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +120,7 @@ func TestWriteComicInfoEscapesHostileValues(t *testing.T) {
 
 	dst := filepath.Join(dir, "out.cbz")
 	hostile := "</Title><Injected>x</Injected><Title>"
-	if err := WriteComicInfo(src, dst, Metadata{Title: hostile}); err != nil {
+	if err := WriteComicInfo(src, dst, Metadata{Title: hostile}, nil); err != nil {
 		t.Fatal(err)
 	}
 	raw, ok := readZipEntry(t, dst, "ComicInfo.xml")
@@ -149,7 +149,7 @@ func TestWriteComicInfoFailureLeavesNoPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "out.cbz")
-	if err := WriteComicInfo(bad, dst, Metadata{Title: "X"}); err == nil {
+	if err := WriteComicInfo(bad, dst, Metadata{Title: "X"}, nil); err == nil {
 		t.Error("expected error opening a non-zip source")
 	}
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {

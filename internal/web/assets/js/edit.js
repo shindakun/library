@@ -44,16 +44,64 @@
         return resp.json();
       })
       .then(function (data) {
-        if (data.embedded) {
-          say("Saved and embedded in the file.", false);
+        // The catalog edit is saved; the file embed runs in the background as a
+        // tracked job. Follow it over the import SSE stream so the bar fills.
+        say("Saved. Embedding into the file…", false);
+        if (data.jobId) {
+          watchEmbed(data.jobId);
         } else {
-          say("Saved. Not embedded in file: " + (data.embedReason || "unknown"), false);
+          say("Saved.", false);
         }
       })
       .catch(function (err) {
         say(err.message || "Save failed.", true);
       });
   });
+
+  // watchEmbed follows the background embed job on the import SSE stream and
+  // reflects its progress/outcome in the status line + bar. EventSource
+  // auto-reconnects; we close it once the job reaches a terminal state.
+  function watchEmbed(jobId) {
+    const bar = document.getElementById("embed-bar");
+    if (bar) {
+      bar.hidden = false;
+      bar.removeAttribute("value"); // indeterminate until the first fraction
+    }
+    if (!window.EventSource) {
+      say("Saved. Embedding in the background…", false);
+      return;
+    }
+    const es = new EventSource("/api/imports/stream");
+    es.onmessage = function (ev) {
+      let job;
+      try {
+        job = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      if (!job || job.id !== jobId) return;
+      if (job.state === "running" && bar) {
+        if (job.progress > 0) {
+          bar.value = job.progress;
+        } else {
+          bar.removeAttribute("value");
+        }
+        say("Embedding into the file… " + (job.detail || ""), false);
+      } else if (job.state === "done") {
+        if (bar) bar.hidden = true;
+        say("Saved and embedded in the file.", false);
+        es.close();
+      } else if (job.state === "skipped") {
+        if (bar) bar.hidden = true;
+        say("Saved. Not embedded in file: " + (job.error || "unknown"), false);
+        es.close();
+      } else if (job.state === "failed") {
+        if (bar) bar.hidden = true;
+        say("Saved, but embedding failed: " + (job.error || "unknown"), true);
+        es.close();
+      }
+    };
+  }
 
   // Cover override: PUT the chosen image's raw bytes; refresh the preview on
   // success. The server validates that it decodes as an image.

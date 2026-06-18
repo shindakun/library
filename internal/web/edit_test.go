@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/epub"
@@ -51,6 +52,25 @@ func libraryDir(t *testing.T, s *Server) string {
 	return s.Cat.LibraryRoot()
 }
 
+// waitEmbedDone polls the import-job registry until the given embed job reaches a
+// terminal state (the embed runs in the background after the PUT returns).
+func waitEmbedDone(t *testing.T, s *Server, jobID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, j := range s.Jobs.Snapshot() {
+			if j.ID == jobID && !j.EndedAt.IsZero() {
+				if j.State == "failed" {
+					t.Fatalf("embed job failed: %s", j.Err)
+				}
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("embed job %s did not finish within 5s", jobID)
+}
+
 // TestEditUpdatesDBAndEmbedsFile is the step-4 end-to-end: a PUT edits the
 // catalog AND embeds into the epub file, and the response reports embedded:true.
 func TestEditUpdatesDBAndEmbedsFile(t *testing.T) {
@@ -78,9 +98,8 @@ func TestEditUpdatesDBAndEmbedsFile(t *testing.T) {
 	}
 
 	var resp struct {
-		Book        struct{ Title string }
-		Embedded    bool
-		EmbedReason string `json:"embedReason"`
+		Book  struct{ Title string }
+		JobID string `json:"jobId"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
@@ -88,9 +107,11 @@ func TestEditUpdatesDBAndEmbedsFile(t *testing.T) {
 	if resp.Book.Title != "New Title" {
 		t.Errorf("response title = %q, want New Title", resp.Book.Title)
 	}
-	if !resp.Embedded {
-		t.Errorf("expected embedded:true, got false (reason: %q)", resp.EmbedReason)
+	if resp.JobID == "" {
+		t.Fatal("expected a jobId for the background embed")
 	}
+	// The embed runs in the background; wait for its job to finish.
+	waitEmbedDone(t, s, resp.JobID)
 
 	// DB reflects the edit.
 	got, _ := s.Cat.GetBySlug(context.Background(), slug)

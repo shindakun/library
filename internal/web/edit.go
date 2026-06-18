@@ -2,7 +2,9 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	_ "image/gif"  // register GIF decoder
 	_ "image/jpeg" // register JPEG decoder
@@ -13,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/steve/library/internal/catalog"
+	"github.com/steve/library/internal/ingest"
 )
 
 // maxCoverBytes bounds an uploaded cover image.
@@ -115,10 +118,11 @@ func (p editPayload) toEdits() catalog.Edits {
 	return e
 }
 
-// apiUpdateBook applies a metadata edit: it always writes the edit to the catalog
-// first (the durable change), then attempts to embed it into the file. A failed
-// embed is reported, not fatal: the response carries the updated book plus the
-// embed status, so the UI can show "saved, not yet embedded in file".
+// apiUpdateBook applies a metadata edit. The catalog edit (the durable change) is
+// written synchronously and fast. The file embed can be slow (a large comic
+// re-zips every page), so it runs in the BACKGROUND as a tracked job: the
+// response returns immediately with the new book + a jobId, and the client
+// watches the existing import-job SSE stream for embed progress and completion.
 func (s *Server) apiUpdateBook(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	r.Body = http.MaxBytesReader(w, r.Body, maxEditBody)
@@ -134,16 +138,7 @@ func (s *Server) apiUpdateBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Best-effort embed. EmbedMetadata returns (result, nil) for an expected
-	// failure (it leaves the original file intact); a non-nil err is internal.
-	embed, eerr := s.Cat.EmbedMetadata(r.Context(), slug)
-	if eerr != nil {
-		embed = catalog.EmbedResult{Reason: "embed error: " + eerr.Error()}
-	}
-	// Re-read so the response reflects any path change from a rename-on-embed.
-	if fresh, gerr := s.Cat.GetBySlug(r.Context(), slug); gerr == nil {
-		updated = fresh
-	}
+	jobID := s.startEmbedJob(updated)
 
 	writeJSON(w, map[string]any{
 		"book": map[string]any{
@@ -151,9 +146,49 @@ func (s *Server) apiUpdateBook(w http.ResponseWriter, r *http.Request) {
 			"title":   updated.Title,
 			"authors": updated.Authors,
 		},
-		"embedded":    embed.Embedded,
-		"embedReason": embed.Reason,
+		"jobId": jobID,
 	})
+}
+
+// startEmbedJob runs EmbedMetadata in the background, reporting into the
+// import-job registry so the edit page can show live progress over the existing
+// SSE stream. Returns the job id (empty if the registry is unavailable, in which
+// case the embed still runs untracked). The catalog edit has already landed, so
+// even a failed embed only means "not yet embedded in file".
+func (s *Server) startEmbedJob(b *catalog.Book) string {
+	if s.Jobs == nil {
+		// No registry (e.g. in tests that don't need progress): embed inline,
+		// still off the request goroutine so the handler returns promptly.
+		go func() { _, _ = s.Cat.EmbedMetadata(context.Background(), b.Slug(), nil) }()
+		return ""
+	}
+	jobID := s.Jobs.Start(b.Title, "embed")
+	slug := b.Slug()
+	s.Jobs.Update(jobID, func(j *ingest.Job) { j.Step = "embedding metadata" })
+	go func() {
+		onProgress := func(done, total int) {
+			frac := 0.0
+			if total > 0 {
+				frac = float64(done) / float64(total)
+			}
+			s.Jobs.Update(jobID, func(j *ingest.Job) {
+				j.Step = "embedding metadata"
+				j.Progress = frac
+				j.Detail = fmt.Sprintf("%d/%d", done, total)
+			})
+		}
+		res, err := s.Cat.EmbedMetadata(context.Background(), slug, onProgress)
+		switch {
+		case err != nil:
+			s.Jobs.Finish(jobID, ingest.StateFailed, "embed error: "+err.Error(), slug)
+		case !res.Embedded:
+			// Not a hard failure: the DB edit stands, the file just wasn't rewritten.
+			s.Jobs.Finish(jobID, ingest.StateSkipped, res.Reason, slug)
+		default:
+			s.Jobs.Finish(jobID, ingest.StateDone, "", slug)
+		}
+	}()
+	return jobID
 }
 
 // editFormPost is the no-JS fallback: a plain HTML form post. It applies the
@@ -183,11 +218,13 @@ func (s *Server) editFormPost(w http.ResponseWriter, r *http.Request) {
 		Published:   formField("published"),
 		Tags:        formField("tags"),
 	}
-	if _, err := s.Cat.UpdateMetadata(r.Context(), slug, p.toEdits()); err != nil {
+	updated, err := s.Cat.UpdateMetadata(r.Context(), slug, p.toEdits())
+	if err != nil {
 		s.bookErr(w, err)
 		return
 	}
-	_, _ = s.Cat.EmbedMetadata(r.Context(), slug)
+	// Embed in the background so a large comic doesn't block the redirect.
+	s.startEmbedJob(updated)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

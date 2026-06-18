@@ -25,6 +25,11 @@ header h1 { font-size:18px; margin:0; }
 header form.upload { margin-left:auto; }
 header .nav-import { margin-left:auto; padding:7px 12px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; text-decoration:none; font-size:14px; }
 header .nav-import:hover { opacity:.9; }
+/* Push the theme toggle to the right when it is the only trailing control (e.g.
+   the edit page header, which has just a title + toggle), matching every other
+   page where the toggle sits at the far right. Harmless where an earlier element
+   already takes the auto margin. */
+header > .theme-toggle:last-child { margin-left:auto; }
 input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); border-radius:8px; width:260px; background:var(--panel); color:var(--fg); }
 .upload { display:flex; gap:8px; align-items:center; }
 .upload input[type=file]{ font-size:13px; max-width:230px; color:var(--fg); }
@@ -144,3 +149,10 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 .cover-preview { max-width:160px; border-radius:8px; border:1px solid var(--border); background:var(--cover-bg); }
 .cover-edit label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--muted); }
 .cover-edit input[type=file] { font-size:13px; color:var(--fg); }
+
+/* Embed progress on the edit page (mirrors the import progress bar) */
+.embed-bar { width:100%; height:6px; margin-top:10px; appearance:none; -webkit-appearance:none; border:none; border-radius:999px; background:var(--cover-bg); overflow:hidden; }
+.embed-bar::-webkit-progress-bar { background:var(--cover-bg); border-radius:999px; }
+.embed-bar::-webkit-progress-value { background:var(--accent); border-radius:999px; }
+.embed-bar::-moz-progress-bar { background:var(--accent); border-radius:999px; }
+.edit-wrap .hint { color:var(--faint); font-size:12px; margin:10px 0 0; }

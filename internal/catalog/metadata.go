@@ -348,7 +348,9 @@ type EmbedResult struct {
 // updated; the slug is NOT (slug_override is stable). On any failure the original
 // file is left untouched and a reason is returned (Embedded=false, nil error);
 // an error is returned only for unexpected/internal failures.
-func (c *Catalog) EmbedMetadata(ctx context.Context, slug string) (EmbedResult, error) {
+// onProgress, if non-nil, is called with (done, total) as the file is rewritten,
+// so a slow embed (a large comic re-zips every page) can drive a progress bar.
+func (c *Catalog) EmbedMetadata(ctx context.Context, slug string, onProgress func(done, total int)) (EmbedResult, error) {
 	b, err := c.GetBySlug(ctx, slug)
 	if err != nil {
 		return EmbedResult{}, err
@@ -372,7 +374,7 @@ func (c *Catalog) EmbedMetadata(ctx context.Context, slug string) (EmbedResult, 
 			Language:    b.Language,
 			Description: b.Description,
 			Published:   b.Published,
-		})
+		}, onProgress)
 		if werr != nil {
 			return EmbedResult{Reason: "comic rewrite failed: " + werr.Error()}, nil
 		}
