@@ -68,6 +68,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /book/{slug}/edit", s.editForm)
 	mux.HandleFunc("PUT /api/books/{slug}", s.apiUpdateBook)
 	mux.HandleFunc("POST /book/{slug}/edit", s.editFormPost)
+	mux.HandleFunc("PUT /book/{slug}/cover", s.apiSetCover)
 	mux.HandleFunc("POST /api/scan", s.apiScan)
 	mux.HandleFunc("POST /api/upload", s.apiUpload)
 	mux.HandleFunc("POST /api/setup", s.apiSetup)
@@ -136,6 +137,11 @@ func (s *Server) cover(w http.ResponseWriter, r *http.Request) {
 	b, err := s.book(r.Context(), r)
 	if err != nil {
 		s.bookErr(w, err)
+		return
+	}
+	// A user-set override wins over the derived cover.
+	if p := s.Cat.CoverOverridePath(b); p != "" {
+		http.ServeFile(w, r, p)
 		return
 	}
 	// Fast path: serve the pre-extracted cover from the cache if present.

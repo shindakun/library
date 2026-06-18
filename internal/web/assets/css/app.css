@@ -138,3 +138,9 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 /* Per-card Edit affordance on the grid */
 .card .edit-link { display:block; padding:0 12px 10px; font-size:12px; color:var(--faint); text-decoration:none; }
 .card .edit-link:hover { color:var(--fg); text-decoration:underline; }
+
+/* Cover override on the edit page */
+.cover-edit { margin-top:28px; padding-top:20px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:12px; align-items:flex-start; }
+.cover-preview { max-width:160px; border-radius:8px; border:1px solid var(--border); background:var(--cover-bg); }
+.cover-edit label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--muted); }
+.cover-edit input[type=file] { font-size:13px; color:var(--fg); }

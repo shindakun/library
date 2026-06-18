@@ -228,6 +228,55 @@ func coverExt(mime string) string {
 	}
 }
 
+// overridesDir is the subdir of the covers cache holding USER-SET cover
+// overrides. It is deliberately separate from the cache files (which live
+// directly under coversDir) so the extractor never overwrites an override and an
+// override is never mistaken for a derived cache file.
+func (c *Catalog) overridesDir() string {
+	return filepath.Join(c.coversDir, "overrides")
+}
+
+// CoverOverridePath returns the on-disk path of a user-set cover override for the
+// book, or "" if none exists (or the cache is disabled). Overrides are keyed on
+// the stable slug, so they survive embeds and re-imports.
+func (c *Catalog) CoverOverridePath(b *Book) string {
+	if c.coversDir == "" {
+		return ""
+	}
+	for _, ext := range []string{".jpg", ".png", ".gif"} {
+		p := filepath.Join(c.overridesDir(), b.Slug()+ext)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// SetCoverOverride writes user-supplied image bytes as the book's cover override
+// (replacing any existing override for this slug), and marks has_cover. mime
+// selects the extension. Returns an error only on a real I/O failure.
+func (c *Catalog) SetCoverOverride(ctx context.Context, b *Book, data []byte, mime string) error {
+	if c.coversDir == "" {
+		return fmt.Errorf("cover cache disabled")
+	}
+	if err := os.MkdirAll(c.overridesDir(), 0o755); err != nil {
+		return err
+	}
+	// Remove any prior override (possibly a different extension) so resolution is
+	// unambiguous.
+	for _, ext := range []string{".jpg", ".png", ".gif"} {
+		_ = os.Remove(filepath.Join(c.overridesDir(), b.Slug()+ext))
+	}
+	dst := filepath.Join(c.overridesDir(), b.Slug()+coverExt(mime))
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return err
+	}
+	if _, err := c.db.ExecContext(ctx, `UPDATE books SET has_cover=1 WHERE id=?`, b.ID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (c *Catalog) Close() error { return c.db.Close() }
 
 func (c *Catalog) migrate() error {

@@ -59,6 +59,15 @@
       <span id="edit-status" class="edit-status"></span>
     </div>
   </form>
+
+  <!-- Cover override: uploads independently of the metadata form. -->
+  <div class="cover-edit">
+    <img class="cover-preview" src="/book/{{.Book.Slug}}/cover" alt="cover" onerror="this.style.display='none'">
+    <label>Replace cover <span class="muted">(JPEG, PNG, or GIF)</span>
+      <input type="file" id="cover-input" accept="image/png,image/jpeg,image/gif">
+    </label>
+    <span id="cover-status" class="edit-status"></span>
+  </div>
 </div>
 </body>
 </html>{{end}}

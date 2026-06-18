@@ -1,13 +1,59 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"image"
+	_ "image/gif"  // register GIF decoder
+	_ "image/jpeg" // register JPEG decoder
+	_ "image/png"  // register PNG decoder
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/steve/library/internal/catalog"
 )
+
+// maxCoverBytes bounds an uploaded cover image.
+const maxCoverBytes = 8 << 20 // 8 MiB
+
+// apiSetCover stores a user-supplied cover override for a book. The upload is
+// validated to actually decode as an image (so a non-image / hostile blob is
+// rejected), and the detected format selects the stored mime/extension. The
+// override is keyed on the stable slug and wins over the extracted cover.
+func (s *Server) apiSetCover(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxCoverBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "upload too large or unreadable", http.StatusBadRequest)
+		return
+	}
+	// Validate it decodes as a real image and learn its format (don't trust the
+	// client's content-type).
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		http.Error(w, "not a valid image", http.StatusUnsupportedMediaType)
+		return
+	}
+	mime := "image/jpeg"
+	switch format {
+	case "png":
+		mime = "image/png"
+	case "gif":
+		mime = "image/gif"
+	}
+	if err := s.Cat.SetCoverOverride(r.Context(), b, data, mime); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 // maxEditBody bounds the edit request body so a hostile client can't stream an
 // unbounded payload into the handler.

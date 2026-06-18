@@ -2,6 +2,7 @@ package web
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -151,5 +152,63 @@ func TestEditPageServes(t *testing.T) {
 	mux.ServeHTTP(ar, httptest.NewRequest(http.MethodGet, "/static/js/edit.js", nil))
 	if ar.Code != http.StatusOK {
 		t.Errorf("edit.js status = %d, want 200", ar.Code)
+	}
+}
+
+// tinyPNGBytes is a real 1x1 PNG, used as a valid cover upload.
+var tinyPNGBytes = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+	0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+// TestCoverOverrideWinsAndRejectsNonImage covers the cover-override path: a valid
+// image upload becomes the served cover (winning over the extracted cache), and a
+// non-image blob is rejected.
+func TestCoverOverrideWinsAndRejectsNonImage(t *testing.T) {
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	lib := libraryDir(t, s)
+	writeLibraryEPUB(t, lib, "A/B.epub", "B", "A")
+	_, _ = s.Cat.Scan(context.Background())
+	books, _ := s.Cat.List(context.Background(), catalog.ListOptions{})
+	slug := books[0].Slug()
+
+	// A non-image upload is rejected (415), nothing stored.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/book/"+slug+"/cover", strings.NewReader("not an image")))
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("non-image cover: status = %d, want 415", rec.Code)
+	}
+
+	// A valid PNG is accepted and becomes the served cover.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/book/"+slug+"/cover", bytes.NewReader(tinyPNGBytes)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cover upload: status = %d, want 204; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// The override lives in overrides/, isolated from the cache, and GET /cover
+	// serves exactly the override bytes.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/book/"+slug+"/cover", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET cover: status = %d", rec.Code)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), tinyPNGBytes) {
+		t.Error("served cover is not the uploaded override")
+	}
+
+	// The override survives a rescan (it is not the cache; the extractor must not
+	// touch overrides/).
+	_, _ = s.Cat.Scan(context.Background())
+	b, _ := s.Cat.GetBySlug(context.Background(), slug)
+	if s.Cat.CoverOverridePath(b) == "" {
+		t.Error("override was wiped/overwritten by a rescan")
 	}
 }

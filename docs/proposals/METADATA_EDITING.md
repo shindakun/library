@@ -1,6 +1,6 @@
 # Implementation guide: metadata editing
 
-Status: **in progress** (steps 1-4 done; step 5 cover override remains). Design +
+Status: **implemented** (steps 1-5). Design +
 build plan for in-browser metadata editing for both EPUBs and CBZ comics, kept
 lightweight (plain HTML forms, a few JSON endpoints, no new frontend
 dependencies). Edits land in the DB first, then are embedded into the file
@@ -13,7 +13,9 @@ Done: schema + stable slug (1), `catalog.UpdateMetadata` + scan edit-protection
 (2), the comic and epub file writers (3a/3b), and the HTTP/UI: the edit form,
 `PUT /api/books/{slug}` (DB edit then best-effort embed, reporting embed status),
 `catalog.EmbedMetadata` (rewrite-to-temp, verify, swap, rename-on-title-change,
-refresh path/hash/size, slug fixed), and the no-JS form fallback (4).
+refresh path/hash/size, slug fixed), and the no-JS form fallback (4); cover
+override in a separate `data/covers/overrides/` namespace, served in preference
+to the extracted cover and validated to decode as an image (5).
 
 ## 1. The core tension to resolve first
 
@@ -229,19 +231,35 @@ not now.
 
 ## 6. Cover editing (separate, avoids zip surgery)
 
-Covers are read live from the epub (`epub.CoverImage` on each `GET
-/book/{slug}/cover`). To allow replacing a cover WITHOUT rewriting the zip:
+Covers are served by `GET /book/{slug}/cover`: from the extracted cache
+(`data/covers/<slug>.<ext>`) if present, else extracted live. To allow replacing
+a cover WITHOUT rewriting the archive, add a user-set override.
 
-- Store an override at `data/covers/<slug>.jpg` (a new `data/covers/` dir,
-  gitignored like the rest of `data/`).
-- `GET /book/{slug}/cover`: serve the override if it exists, else fall back to
-  `epub.CoverImage`.
-- `PUT /book/{slug}/cover`: accept an uploaded image, write it to the override
-  path (re-encode/resize with stdlib `image/*` to bound size).
-- Set `has_cover` accordingly.
+**Gap found building step 5: override vs cache COLLIDE.** The original plan
+("store an override at `data/covers/<slug>.jpg`") puts the override at the exact
+path the extraction cache uses, so the two are indistinguishable: a `clean-db`
+rescan's `cacheCover` would overwrite the user's override with the extracted
+cover, and "is this a deliberate override or a derived cache file?" is
+unanswerable. They must live in separate namespaces:
+
+- Derived cache: `data/covers/<slug>.<ext>` (safe to wipe, regenerated on scan).
+- User override: `data/covers/overrides/<slug>.<ext>` (authoritative, NOT wiped,
+  never written by the extractor).
+
+`GET /book/{slug}/cover` resolution order becomes: **override -> cache ->
+extract-live**. The cache code (`CoverCachePath`, `cacheCover`, `CacheCoverData`)
+must skip the `overrides/` subdir, and never write into it.
+
+- `PUT /book/{slug}/cover`: accept an uploaded image, validate it actually decodes
+  as an image (stdlib `image.DecodeConfig`, bound the size), write it to the
+  override path. Set `has_cover`. The slug keys the override, so it survives
+  re-imports and embeds (slug is stable).
+- `DELETE /book/{slug}/cover` (optional): remove the override, falling back to the
+  derived cover. Nice-to-have; can defer.
 
 This keeps covers editable without touching the book file, consistent with the
-DB-authoritative model.
+DB-authoritative model. The override is keyed on the stable slug, so an embed that
+rewrites the file (changing its hash) does not orphan the override.
 
 ## 7. Write-back: embedding edits into the file
 
@@ -351,7 +369,10 @@ source comic, so for most comics this ADDS the entry rather than replacing it.
 4. HTTP + UI: `GET /book/{slug}/edit` form, `PUT /api/books/{slug}` (DB edit then
    attempt embed; report embed status), non-JS form fallback; an Edit affordance
    on the grid/table and reader bar.
-5. Cover override (dir + serve-override + upload endpoint).
+5. Cover override: a separate `data/covers/overrides/` namespace (NOT the cache
+   path, which collides), cover resolution order override->cache->extract, a
+   `PUT /book/{slug}/cover` upload (validate it decodes as an image), and the
+   cache code taught to ignore the overrides subdir.
 
 ## 9. Risks / notes
 

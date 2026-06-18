@@ -54,4 +54,44 @@
         say(err.message || "Save failed.", true);
       });
   });
+
+  // Cover override: PUT the chosen image's raw bytes; refresh the preview on
+  // success. The server validates that it decodes as an image.
+  const coverInput = document.getElementById("cover-input");
+  const coverStatus = document.getElementById("cover-status");
+  const coverPreview = document.querySelector(".cover-preview");
+  if (coverInput) {
+    coverInput.addEventListener("change", function () {
+      const file = coverInput.files && coverInput.files[0];
+      if (!file) return;
+      if (coverStatus) coverStatus.textContent = "Uploading cover…";
+      fetch("/book/" + encodeURIComponent(slug) + "/cover", {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      })
+        .then(function (resp) {
+          if (!resp.ok) {
+            return resp.text().then(function (t) {
+              throw new Error(t.trim() || "cover upload failed (" + resp.status + ")");
+            });
+          }
+          if (coverStatus) {
+            coverStatus.textContent = "Cover updated.";
+            coverStatus.classList.remove("error");
+          }
+          // Bust the cache so the new override shows.
+          if (coverPreview) {
+            coverPreview.style.display = "";
+            coverPreview.src = "/book/" + encodeURIComponent(slug) + "/cover?t=" + Date.now();
+          }
+        })
+        .catch(function (err) {
+          if (coverStatus) {
+            coverStatus.textContent = err.message || "Cover upload failed.";
+            coverStatus.classList.add("error");
+          }
+        });
+    });
+  }
 })();
