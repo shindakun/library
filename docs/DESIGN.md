@@ -364,8 +364,10 @@ extracted once during `Index` (so scan and import both populate it) to
 `data/covers/<slug>.<ext>` and served as a flat file. The handler falls back to
 live extraction on a cache miss and lazily populates it, so books indexed before
 the cache self-heal. The cache is purely derived: wiping `data/covers` just
-reverts to live extraction. This also unifies with a future cover override (an
-uploaded cover overwrites the same file).
+reverts to live extraction. A user-uploaded **cover override** lives in a
+separate `data/covers/overrides/<slug>.<ext>` namespace (so the extractor never
+clobbers it) and is served in preference to the derived cover; resolution order
+is override -> cache -> live-extract.
 
 ### 5.8 First-run setup
 
@@ -485,8 +487,15 @@ Decisions settled during implementation:
 4. **X4 interop:** verified on the real device. The Xteink X4 browses the paged
    OPDS feed and downloads books over WiFi, confirming the §5.4 contract.
 
+Since shipped (no longer "later"):
+
+- **Comics:** CBZ/CBR import (CBR converted to CBZ), cataloging, an in-browser
+  comic viewer, and OPDS with the comic media type.
+- **In-browser metadata editing:** edit fields, embed into the file (OPF /
+  ComicInfo.xml) in the background, a stable slug across rewrites, a cover
+  override, and delete, all from a per-book three-dot menu.
+
 Open for later:
 
-- **Cover/metadata enrichment:** EPUB-embedded metadata only in v1. Fetching from an
-  external source (Google Books / OpenLibrary) for sparse files is a possible
-  enhancement.
+- **Metadata enrichment from an external source** (Google Books / OpenLibrary)
+  for sparse files. The editor exists; this would pre-fill it / batch-apply.

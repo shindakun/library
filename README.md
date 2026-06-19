@@ -49,6 +49,7 @@ docker/              container stack (compose + Dockerfiles)
   sidecar/           Python DRM worker (worker.py) + CLI setup (setup.py)
 data/library/        clean EPUBs + CBZ comics (the library); sorted by author then title
 data/covers/         extracted cover-image cache, keyed by slug (derived, safe to wipe)
+  covers/overrides/  user-uploaded cover overrides, keyed by slug (authoritative)
 data/import/         drop or upload .acsm / .epub / .cbz / .cbr here -> pipeline -> library
   import/work/       sidecar + CBR-convert scratch (NOT watched)
   import/done/       originals archived here on success
@@ -222,13 +223,24 @@ Working and verified end-to-end via the compose stack:
 - **Web upload**: `.acsm`/`.epub`/`.cbz`/`.cbr` upload routes through the same
   pipeline, with live per-file progress on the `/imports` page (SSE).
 - **Browser UI**: grid + sortable table views (persisted), dark mode, clickable
-  author search; covers cached to `data/covers` for fast grid loads.
+  author search; covers cached to `data/covers` for fast grid loads. Each book
+  has a three-dot menu with **Edit** and **Delete**.
+- **Metadata editing**: edit a book's title/authors/series/language/publisher/
+  description in the browser. Edits save to the catalog instantly, then embed
+  into the file in the background (OPF for epubs, `ComicInfo.xml` for comics,
+  added if absent) with a live progress bar; a stable slug keeps URLs fixed
+  across the rewrite. A scan never clobbers an edited field.
+- **Cover override**: upload a replacement cover (kept in
+  `data/covers/overrides/`, served in preference to the extracted one) without
+  rewriting the book file.
+- **Delete**: removes the catalog row, the library file, and any cover, behind a
+  confirmation.
 - **Library view** sorts by author, then title; "Recently Added" (OPDS) stays
   newest-first.
 - **The two-container stack** builds and runs via `make up`; the Go service reaches
   the sidecar by service name over `libnet`.
-- **Test suite**: hermetic Go tests across catalog, opds, epub, drm, web, ingest;
-  green under `-race`.
+- **Test suite**: hermetic Go tests across catalog, comic, opds, epub, drm, web,
+  ingest (incl. metadata edit/embed, cover override, delete); green under `-race`.
 
 - **Browser reader**: `epub.js` + `jszip` are vendored under
   `internal/web/assets/vendor/` and embedded in the binary; the reader renders

@@ -262,6 +262,11 @@ func titleFromFilename(p string) string {
 	return strings.TrimSpace(base)
 }
 
+// maxEntryBytes caps a single comic entry (a page image or ComicInfo.xml) so a
+// hostile/oversized archive can't OOM a scan. 128 MiB is far above any real
+// comic page.
+const maxEntryBytes = 128 << 20
+
 func readEntry(zr *zip.Reader, name string) ([]byte, string, error) {
 	for _, f := range zr.File {
 		if f.Name == name {
@@ -271,8 +276,12 @@ func readEntry(zr *zip.Reader, name string) ([]byte, string, error) {
 			}
 			defer func() { _ = rc.Close() }()
 			var buf bytes.Buffer
-			if _, err := io.Copy(&buf, rc); err != nil {
+			n, err := io.Copy(&buf, io.LimitReader(rc, maxEntryBytes+1))
+			if err != nil {
 				return nil, "", err
+			}
+			if n > maxEntryBytes {
+				return nil, "", fmt.Errorf("entry %q exceeds %d bytes", name, maxEntryBytes)
 			}
 			return buf.Bytes(), mediaType(name), nil
 		}

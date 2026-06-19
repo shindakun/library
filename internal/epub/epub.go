@@ -225,9 +225,9 @@ func IsADEPTEncrypted(epubPath string) (bool, error) {
 	// rights.xml is the strongest ADEPT signal.
 	if f := openFile(&zr.Reader, "META-INF/rights.xml"); f != nil {
 		if rc, err := f.Open(); err == nil {
-			data, _ := io.ReadAll(rc)
+			data, rerr := readCapped(rc, maxMetaBytes)
 			_ = rc.Close()
-			if bytes.Contains(data, []byte("ns.adobe.com/adept")) {
+			if rerr == nil && bytes.Contains(data, []byte("ns.adobe.com/adept")) {
 				return true, nil
 			}
 		}
@@ -236,9 +236,9 @@ func IsADEPTEncrypted(epubPath string) (bool, error) {
 	// obfuscation uses the IDPF namespace instead, so we match Adobe specifically.
 	if f := openFile(&zr.Reader, "META-INF/encryption.xml"); f != nil {
 		if rc, err := f.Open(); err == nil {
-			data, _ := io.ReadAll(rc)
+			data, rerr := readCapped(rc, maxMetaBytes)
 			_ = rc.Close()
-			if bytes.Contains(data, []byte("ns.adobe.com/adept")) {
+			if rerr == nil && bytes.Contains(data, []byte("ns.adobe.com/adept")) {
 				return true, nil
 			}
 		}
@@ -276,11 +276,32 @@ func CoverImage(epubPath string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(rc)
+	data, err := readCapped(rc, maxCoverBytes)
 	if err != nil {
 		return nil, "", err
 	}
 	return data, mediaTypeForCover(coverPath), nil
+}
+
+// Read caps for untrusted zip entries: a cover image and the small DRM metadata
+// files. These bound memory use against a hostile/oversized archive (a cover or
+// rights.xml claiming to be gigabytes) so a scan can't be OOM'd by one bad file.
+const (
+	maxCoverBytes = 64 << 20 // 64 MiB: very generous for a cover image
+	maxMetaBytes  = 1 << 20  // 1 MiB: rights.xml / encryption.xml are tiny
+)
+
+// readCapped reads up to max bytes, returning an error if the source exceeds it
+// (so an oversized entry is rejected rather than silently truncated).
+func readCapped(r io.Reader, max int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("entry exceeds %d bytes", max)
+	}
+	return data, nil
 }
 
 // openFile finds a zip entry by name, tolerating leading "./" and case.

@@ -36,6 +36,13 @@ func TestSafeFilename(t *testing.T) {
 		`weird"<>|name`:             "weird____name", // 4 illegal chars: " < > |
 		"":                          "book",          // empty -> fallback
 		"////":                      "____",          // all-illegal stays non-empty
+		// Path-traversal guard: an all-dots segment must NOT survive as "."/"..".
+		"..":           "book",
+		".":            "book",
+		"...":          "book",
+		"../etc":       ".._etc",   // the slash is neutralized; not all-dots, kept
+		"name\x00with": "namewith", // control chars dropped
+		"trailing... ": "trailing", // trailing dots/spaces trimmed
 	}
 	for in, want := range cases {
 		if got := SafeFilename(in); got != want {

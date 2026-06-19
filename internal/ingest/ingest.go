@@ -472,9 +472,13 @@ func moveFile(src, dst string) error {
 	}
 	if _, err := out.ReadFrom(in); err != nil {
 		_ = out.Close()
+		_ = os.Remove(dst) // don't leave a partial destination behind
 		return err
 	}
 	if err := out.Close(); err != nil {
+		// The flush/close failed: dst may be incomplete. Remove it and keep src,
+		// so a failed move never deletes the source and imports a corrupt file.
+		_ = os.Remove(dst)
 		return err
 	}
 	return os.Remove(src)
