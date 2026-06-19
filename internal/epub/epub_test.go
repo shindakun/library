@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -197,5 +198,36 @@ func TestMediaTypeForCover(t *testing.T) {
 		if got := mediaTypeForCover(in); got != want {
 			t.Errorf("mediaTypeForCover(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestOversizedMetadataRejected confirms the bounded XML reads reject a hostile
+// oversized container.xml / OPF instead of parsing unbounded.
+func TestOversizedMetadataRejected(t *testing.T) {
+	huge := strings.Repeat(" ", int(maxMetaBytes)+10) // valid-ish whitespace, over the cap
+	p := writeEPUB(t, map[string]string{
+		"META-INF/container.xml": `<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>` + huge,
+		"content.opf":            opf("T", "A", ""),
+	})
+	if _, err := Read(p); err == nil {
+		t.Error("expected Read to reject an oversized container.xml")
+	}
+}
+
+// TestADEPTFailsSafeOnUnreadableRights: an existing-but-unreadable rights.xml
+// (over the cap) must be treated as ADEPT-encrypted, not silently clean.
+func TestADEPTFailsSafeOnUnreadableRights(t *testing.T) {
+	huge := strings.Repeat("x", int(maxMetaBytes)+10) // no adept marker, but over the cap
+	p := writeEPUB(t, map[string]string{
+		"META-INF/container.xml": containerXML,
+		"content.opf":            opf("T", "A", ""),
+		"META-INF/rights.xml":    huge,
+	})
+	enc, err := IsADEPTEncrypted(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enc {
+		t.Error("an oversized/unreadable rights.xml must fail safe to encrypted=true")
 	}
 }

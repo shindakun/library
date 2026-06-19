@@ -10,9 +10,10 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"path"
 	"strings"
+
+	"github.com/steve/library/internal/fileutil"
 )
 
 // Metadata is the subset of OPF data we catalog.
@@ -148,8 +149,12 @@ func findOPFPath(zr *zip.Reader) (string, error) {
 		return "", err
 	}
 	defer func() { _ = rc.Close() }()
+	data, err := fileutil.ReadCapped(rc, maxMetaBytes)
+	if err != nil {
+		return "", fmt.Errorf("read container.xml: %w", err)
+	}
 	var c container
-	if err := xml.NewDecoder(rc).Decode(&c); err != nil {
+	if err := xml.Unmarshal(data, &c); err != nil {
 		return "", fmt.Errorf("parse container.xml: %w", err)
 	}
 	if len(c.Rootfiles) == 0 || c.Rootfiles[0].FullPath == "" {
@@ -168,8 +173,12 @@ func parseOPF(zr *zip.Reader, opfPath string) (*opfPackage, error) {
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
+	data, err := fileutil.ReadCapped(rc, maxOPFBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read opf: %w", err)
+	}
 	var pkg opfPackage
-	if err := xml.NewDecoder(rc).Decode(&pkg); err != nil {
+	if err := xml.Unmarshal(data, &pkg); err != nil {
 		return nil, fmt.Errorf("parse opf: %w", err)
 	}
 	return &pkg, nil
@@ -222,23 +231,35 @@ func IsADEPTEncrypted(epubPath string) (bool, error) {
 	}
 	defer func() { _ = zr.Close() }()
 
-	// rights.xml is the strongest ADEPT signal.
+	// rights.xml is the strongest ADEPT signal. If it cannot be read (e.g. it
+	// exceeds the cap), fail SAFE: assume encrypted, since a DRM-free epub does
+	// not ship a rights.xml at all. Misreading an encrypted book as clean would
+	// import undecryptable content; the reverse just routes a clean file through
+	// the (harmless) decrypt path.
 	if f := openFile(&zr.Reader, "META-INF/rights.xml"); f != nil {
 		if rc, err := f.Open(); err == nil {
-			data, rerr := readCapped(rc, maxMetaBytes)
+			data, rerr := fileutil.ReadCapped(rc, maxMetaBytes)
 			_ = rc.Close()
-			if rerr == nil && bytes.Contains(data, []byte("ns.adobe.com/adept")) {
+			if rerr != nil {
+				return true, nil // unreadable rights.xml present -> treat as ADEPT
+			}
+			if bytes.Contains(data, []byte("ns.adobe.com/adept")) {
 				return true, nil
 			}
 		}
 	}
 	// Fall back to encryption.xml referencing the ADEPT namespace. Font-only
 	// obfuscation uses the IDPF namespace instead, so we match Adobe specifically.
+	// An encryption.xml we cannot read within the cap is also treated as ADEPT
+	// (fail safe), rather than silently importing possibly-encrypted content.
 	if f := openFile(&zr.Reader, "META-INF/encryption.xml"); f != nil {
 		if rc, err := f.Open(); err == nil {
-			data, rerr := readCapped(rc, maxMetaBytes)
+			data, rerr := fileutil.ReadCapped(rc, maxMetaBytes)
 			_ = rc.Close()
-			if rerr == nil && bytes.Contains(data, []byte("ns.adobe.com/adept")) {
+			if rerr != nil {
+				return true, nil
+			}
+			if bytes.Contains(data, []byte("ns.adobe.com/adept")) {
 				return true, nil
 			}
 		}
@@ -276,33 +297,21 @@ func CoverImage(epubPath string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	defer func() { _ = rc.Close() }()
-	data, err := readCapped(rc, maxCoverBytes)
+	data, err := fileutil.ReadCapped(rc, maxCoverBytes)
 	if err != nil {
 		return nil, "", err
 	}
 	return data, mediaTypeForCover(coverPath), nil
 }
 
-// Read caps for untrusted zip entries: a cover image and the small DRM metadata
-// files. These bound memory use against a hostile/oversized archive (a cover or
-// rights.xml claiming to be gigabytes) so a scan can't be OOM'd by one bad file.
+// Read caps for untrusted zip entries, bounding memory against a hostile or
+// oversized archive so a scan can't be OOM'd by one bad file. The actual capped
+// read is fileutil.ReadCapped (shared with the comic reader).
 const (
 	maxCoverBytes = 64 << 20 // 64 MiB: very generous for a cover image
-	maxMetaBytes  = 1 << 20  // 1 MiB: rights.xml / encryption.xml are tiny
+	maxMetaBytes  = 1 << 20  // 1 MiB: container.xml / rights.xml / encryption.xml are tiny
+	maxOPFBytes   = 16 << 20 // 16 MiB: an OPF manifest can be large but never this big
 )
-
-// readCapped reads up to max bytes, returning an error if the source exceeds it
-// (so an oversized entry is rejected rather than silently truncated).
-func readCapped(r io.Reader, max int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, max+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > max {
-		return nil, fmt.Errorf("entry exceeds %d bytes", max)
-	}
-	return data, nil
-}
 
 // openFile finds a zip entry by name, tolerating leading "./" and case.
 func openFile(zr *zip.Reader, name string) *zip.File {

@@ -10,14 +10,14 @@ package comic
 
 import (
 	"archive/zip"
-	"bytes"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/steve/library/internal/fileutil"
 )
 
 // Metadata is what the catalog needs from a comic. Field names mirror
@@ -275,15 +275,11 @@ func readEntry(zr *zip.Reader, name string) ([]byte, string, error) {
 				return nil, "", err
 			}
 			defer func() { _ = rc.Close() }()
-			var buf bytes.Buffer
-			n, err := io.Copy(&buf, io.LimitReader(rc, maxEntryBytes+1))
+			data, err := fileutil.ReadCapped(rc, maxEntryBytes)
 			if err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("read entry %q: %w", name, err)
 			}
-			if n > maxEntryBytes {
-				return nil, "", fmt.Errorf("entry %q exceeds %d bytes", name, maxEntryBytes)
-			}
-			return buf.Bytes(), mediaType(name), nil
+			return data, mediaType(name), nil
 		}
 	}
 	return nil, "", fmt.Errorf("entry %q not found", name)

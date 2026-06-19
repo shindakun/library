@@ -2,6 +2,7 @@ package fileutil
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +49,21 @@ func TestSafeFilename(t *testing.T) {
 		if got := SafeFilename(in); got != want {
 			t.Errorf("SafeFilename(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestReadCapped(t *testing.T) {
+	// Under the cap: returns all bytes.
+	got, err := ReadCapped(strings.NewReader("hello"), 10)
+	if err != nil || string(got) != "hello" {
+		t.Errorf("under cap: got %q err %v, want hello", got, err)
+	}
+	// Exactly at the cap: allowed.
+	if _, err := ReadCapped(strings.NewReader("12345"), 5); err != nil {
+		t.Errorf("at cap: unexpected error %v", err)
+	}
+	// Over the cap: rejected (not truncated).
+	if _, err := ReadCapped(strings.NewReader("123456"), 5); err == nil {
+		t.Error("over cap: expected an error, got nil")
 	}
 }

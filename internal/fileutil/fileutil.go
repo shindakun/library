@@ -2,9 +2,27 @@
 package fileutil
 
 import (
+	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 )
+
+// ReadCapped reads up to max bytes from r and returns them, or an error if the
+// source exceeds max (so an oversized/hostile input is rejected, never silently
+// truncated). It reads at most max+1 bytes, so the over-limit case is detected
+// without buffering the whole oversized source. Shared by the epub and comic
+// readers, which both pull untrusted entries out of a zip and must bound memory.
+func ReadCapped(r io.Reader, max int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("input exceeds %d bytes", max)
+	}
+	return data, nil
+}
 
 // LibraryRelPath returns the library-relative path for a book, organized on
 // disk as "Author/Title<ext>" (e.g. ".epub" or ".cbz"). The first author is used
