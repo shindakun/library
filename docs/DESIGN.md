@@ -125,8 +125,8 @@ the thing we're replacing.
                      │   └─ SQLite catalog   modernc.org/sqlite     │
                      └───────┬───────────────────────────────┬──────┘
                              │ files in/out                   │ exec, rarely
-                  ┌──────────▼──────────┐          ┌──────────▼──────────────────-───┐
-                  │ /data/library/*.epub│          │ drm-sidecar (python, --rm)      │
+                  ┌──────────▼──────────┐          ┌──────────▼──────────────────────┐
+                  │ /data/library/*.epub│          │ ebook-sidecar (python, --rm)    │
                   │ /data/catalog.db    │          │  fulfill.py → ineptepub.py      │
                   │ /data/import/  (in) │          │  mounts: /secrets (activation,  │
                   │ /secrets/  (.der,   │          │          .der), /work (job tmp) │
@@ -386,7 +386,7 @@ The stack is two containers orchestrated by compose:
 
 - **library** (Go): built from `docker/Dockerfile` (distroless, repo-root build
   context), serves `:8080`, mounts `./data`.
-- **drm-sidecar** (Python): built from `docker/sidecar/Dockerfile`, mounts
+- **ebook-sidecar** (Python): built from `docker/ebook-sidecar/Dockerfile`, mounts
   `./secrets` and `./data`.
 
 Two compose files exist: `docker/docker-compose.yml` (the macOS Podman dev file,
@@ -429,7 +429,7 @@ load-bearing for the import pipeline.
    end up owned by a remapped UID.
 
 2. **Service-name DNS → explicit bridge network.** The Go service reaches the sidecar at
-   `http://drm-sidecar:7000`. Container-to-container name resolution is provided by
+   `http://ebook-sidecar:7000`. Container-to-container name resolution is provided by
    `aardvark-dns`, which is reliable on an explicitly-declared custom network. Some rootless
    Podman / podman-compose version combos have had DNS regressions on the *implicit* default
    network, so we declare `libnet` and attach both services to it.

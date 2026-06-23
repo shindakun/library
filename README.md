@@ -21,14 +21,14 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
   reader (epub.js for books, a built-in image-sequence viewer for comics), OPDS
   1.2 feed, import watcher (the `ingest` package), upload endpoint. Never imports
   Python.
-- **`drm-sidecar`** (optional): quarantined Python worker. Runs
+- **`ebook-sidecar`** (optional): quarantined Python worker. Runs
   `acsm-calibre-plugin` (fulfillment) + DeDRM's `ineptepub` (decryption). Reads
   `/secrets` for the Adobe activation + key, and writes it only during first-run
   setup.
 
 The sidecar is **only** needed for legacy-DRM content: `.acsm` loans and
 ADEPT-encrypted `.epub`. If you have none, run **without it**: set `-sidecar=""`
-(or `DRM_SIDECAR_URL=""`). Then the first-run Adobe setup form is hidden, no
+(or `EBOOK_SIDECAR_URL=""`). Then the first-run Adobe setup form is hidden, no
 sidecar is probed, and comics (`.cbz`/`.cbr`) and DRM-free epubs import normally;
 a `.acsm`/encrypted `.epub` is rejected into `import/failed/` with a clear reason.
 
@@ -53,7 +53,7 @@ internal/fileutil/   small shared filesystem helpers
 docker/              container stack (compose + Dockerfiles)
   docker-compose.yml two-service stack; paths are relative to docker/
   Dockerfile         Go service image (distroless, ~30 MB)
-  sidecar/           Python DRM worker (worker.py) + CLI setup (setup.py)
+  ebook-sidecar/     Python ebook-DRM worker (worker.py) + CLI setup (setup.py)
 data/library/        clean EPUBs + CBZ comics (the library); sorted by author then title
 data/covers/         extracted cover-image cache, keyed by slug (derived, safe to wipe)
   covers/overrides/  user-uploaded cover overrides, keyed by slug (authoritative)
@@ -126,7 +126,7 @@ Three Podman realities are baked into `docker/docker-compose.yml`:
    UID the others can't touch, breaking the import pipeline. `keep-id` maps your
    host UID straight through so all three agree on ownership.
 2. **Explicit `libnet` bridge network** so `aardvark-dns` resolves the service
-   name `drm-sidecar` reliably (some rootless default-network combos have flaky
+   name `ebook-sidecar` reliably (some rootless default-network combos have flaky
    DNS).
 3. **SELinux relabel suffixes** `:z` (shared) / `:Z` (private) on bind mounts, for
    Fedora/RHEL hosts. Harmless no-ops on non-SELinux systems.

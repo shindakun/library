@@ -23,7 +23,7 @@ import (
 
 // Client talks to the sidecar worker.
 type Client struct {
-	BaseURL string // e.g. http://drm-sidecar:7000
+	BaseURL string // e.g. http://ebook-sidecar:7000
 	HTTP    *http.Client
 }
 

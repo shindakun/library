@@ -28,10 +28,13 @@ var version = "dev"
 
 func main() {
 	var (
-		addr        = flag.String("addr", env("LIBRARY_ADDR", ":8080"), "listen address")
-		dataDir     = flag.String("data", env("LIBRARY_DATA", "./data"), "data directory (books, import, catalog.db)")
-		baseURL     = flag.String("base-url", env("LIBRARY_BASE_URL", "http://localhost:8080"), "absolute base URL the X4 uses to reach this server")
-		sidecarURL  = flag.String("sidecar", env("DRM_SIDECAR_URL", "http://localhost:7000"), "DRM sidecar worker URL")
+		addr    = flag.String("addr", env("LIBRARY_ADDR", ":8080"), "listen address")
+		dataDir = flag.String("data", env("LIBRARY_DATA", "./data"), "data directory (books, import, catalog.db)")
+		baseURL = flag.String("base-url", env("LIBRARY_BASE_URL", "http://localhost:8080"), "absolute base URL the X4 uses to reach this server")
+		// EBOOK_SIDECAR_URL is the ebook DRM sidecar (renamed from DRM_SIDECAR_URL,
+		// which is still honored as a fallback for existing deploys). Empty
+		// disables ebook DRM (no-sidecar mode).
+		sidecarURL  = flag.String("sidecar", env("EBOOK_SIDECAR_URL", env("DRM_SIDECAR_URL", "http://localhost:7000")), "ebook DRM sidecar worker URL")
 		scanOnBoot  = flag.Bool("scan", true, "scan the books dir for new files on startup")
 		reorganize  = flag.Bool("reorganize", false, "move existing books into Author/Title.epub layout on startup, then continue")
 		showVersion = flag.Bool("version", false, "print version and exit")

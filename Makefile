@@ -171,8 +171,8 @@ prod-deploy: ## Pull newest images and restart the prod stack in place
 
 .PHONY: drm-setup
 drm-setup: ## One-time: authorize Adobe + export key into ./secrets (interactive)
-	$(DC) build drm-sidecar
-	$(COMPOSE) -f $(COMPOSE_FILE) run --rm --userns=keep-id drm-sidecar python /opt/setup.py
+	$(DC) build ebook-sidecar
+	$(COMPOSE) -f $(COMPOSE_FILE) run --rm --userns=keep-id ebook-sidecar python /opt/setup.py
 
 ## ---- Housekeeping ----
 

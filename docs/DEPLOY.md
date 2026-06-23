@@ -116,7 +116,7 @@ against the sidecar image directly:
 
 ```sh
 docker compose -f docker-compose.prod.yml run --rm -it \
-  drm-sidecar python /opt/setup.py
+  ebook-sidecar python /opt/setup.py
 ```
 
 It prompts for the AdobeID, password, and ADE version, and writes the same files

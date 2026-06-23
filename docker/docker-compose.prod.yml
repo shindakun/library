@@ -21,17 +21,17 @@ services:
     environment:
       LIBRARY_DATA: /data
       LIBRARY_BASE_URL: ${LIBRARY_BASE_URL:-http://localhost:8080}
-      DRM_SIDECAR_URL: http://drm-sidecar:7000
+      EBOOK_SIDECAR_URL: http://ebook-sidecar:7000
     volumes:
       - ./data:/data
     networks:
       - libnet
     depends_on:
-      - drm-sidecar
+      - ebook-sidecar
     restart: unless-stopped
 
-  drm-sidecar:
-    image: ${REGISTRY:-ghcr.io/shindakun/library}/sidecar:${TAG:-latest}
+  ebook-sidecar:
+    image: ${REGISTRY:-ghcr.io/shindakun/library}/ebook-sidecar:${TAG:-latest}
     environment:
       SECRETS_DIR: /secrets
       WORK_DIR: /data/import/work

@@ -21,9 +21,9 @@ jobs:
           - name: server
             context: .
             dockerfile: docker/Dockerfile
-          - name: sidecar
-            context: docker/sidecar
-            dockerfile: docker/sidecar/Dockerfile
+          - name: ebook-sidecar
+            context: docker/ebook-sidecar
+            dockerfile: docker/ebook-sidecar/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +41,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Images are nested under the repo namespace: ghcr.io/<owner>/<repo>/server
-      # and .../sidecar. GHCR requires a lowercase path, so normalize it.
+      # and .../ebook-sidecar. GHCR requires a lowercase path, so normalize it.
       - name: Compute image name
         id: img
         run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/${{ matrix.name }}" >> "$GITHUB_OUTPUT"

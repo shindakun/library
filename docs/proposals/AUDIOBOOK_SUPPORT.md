@@ -166,7 +166,7 @@ batch, not auto-start from the Go service.
 exactly like the comic CBR branch:
 
 ```text
-*.epub / *.acsm   -> existing ADEPT path (drm-sidecar)            [unchanged]
+*.epub / *.acsm   -> existing ADEPT path (ebook-sidecar)            [unchanged]
 *.cbz / *.cbr     -> comic path (convert CBR, no sidecar)         [unchanged]
 *.aax             -> audible-sidecar decrypt -> clean .m4b -> import   [new]
 ```

@@ -9,7 +9,7 @@ Usage (inside the sidecar image, interactive):
 
   docker compose run --rm \\
       -v "$PWD/secrets:/secrets" \\
-      drm-sidecar python /opt/setup.py
+      ebook-sidecar python /opt/setup.py
 
 It wraps acsm-calibre-plugin's standalone register_ADE_account.py and
 get_key_from_Adobe.py. Use a fresh / throwaway Adobe ID. Back up /secrets after.
