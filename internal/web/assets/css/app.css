@@ -30,6 +30,11 @@
   --link:#444; --btn-border:#ccc; --bar:#fff;
   --shadow:0 1px 3px rgba(0,0,0,.08); --radius:10px;
 }
+/* Layout constants (NOT themed): shared by every theme, declared once so a new
+   theme never needs to redeclare them. --header-h is the static top-bar height
+   (index header + reader/comic bar) so navigation never shifts the page. */
+:root { --header-h:60px; }
+
 /* OS prefers dark and the user hasn't picked a theme -> use dark. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) { color-scheme: dark;
@@ -84,7 +89,11 @@
 body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background:var(--bg); color:var(--fg); }
 
 /* --- Header (index) --- */
-header { padding: 16px 24px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:12px 16px; align-items:center; }
+/* The top bar is a STATIC height on every page (--header-h), so navigating
+   between Library, Import, Edit, and the reader never shifts the layout. The
+   header does not wrap (overflow is allowed to scroll on a very narrow window
+   rather than grow taller). #bar (reader/comic) uses the same height. */
+header { height:var(--header-h); padding: 0 24px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; gap:12px 16px; align-items:center; }
 /* Theme picker: a relative wrapper around the button so the dropdown anchors to
    it in both the header and the reader bar. */
 .theme-menu { position:relative; display:inline-flex; }
@@ -166,10 +175,10 @@ body:not([data-view="table"]) .table-wrap { display:none; }
 
 /* --- Reader --- */
 html.reader, body.reader { height:100%; margin:0; }
-#bar { height:44px; display:flex; align-items:center; gap:12px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--bar); }
+#bar { height:var(--header-h); display:flex; align-items:center; gap:12px; padding:0 24px; border-bottom:1px solid var(--border); background:var(--bar); }
 #bar a { color:var(--link); text-decoration:none; font-size:17px; }
 #bar a:hover { color:var(--accent); }
-#viewer { height:calc(100% - 44px); background:var(--bg); }
+#viewer { height:calc(100% - var(--header-h)); background:var(--bg); }
 #bar button { border:1px solid var(--btn-border); background:var(--bar); color:var(--fg); border-radius:6px; padding:4px 10px; cursor:pointer; }
 
 /* Import page: header link + live job list with per-row progress. */
@@ -202,7 +211,7 @@ html.reader, body.reader { height:100%; margin:0; }
 .job.pending .job-step { font-style:italic; }
 
 /* --- Comic reader (image-sequence viewer) --- */
-.comic-viewer { height:calc(100% - 44px); overflow:auto; background:var(--bg); display:flex; justify-content:center; align-items:flex-start; }
+.comic-viewer { height:calc(100% - var(--header-h)); overflow:auto; background:var(--bg); display:flex; justify-content:center; align-items:flex-start; }
 #comic-page { display:block; margin:0 auto; background:var(--cover-bg); }
 /* Hide the image until a page has actually loaded, so the browser's broken-image
    icon never flashes before the first page (or between page swaps). */
@@ -211,7 +220,7 @@ html.reader, body.reader { height:100%; margin:0; }
 body[data-fit="width"] #comic-page { width:100%; max-width:1000px; height:auto; }
 /* Fit height: whole page visible, centered, no scroll. */
 body[data-fit="height"] .comic-viewer { align-items:center; }
-body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:calc(100vh - 44px); height:auto; }
+body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:calc(100vh - var(--header-h)); height:auto; }
 .page-indicator { color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }
 
 /* Metadata edit form */
@@ -229,6 +238,12 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 .edit-status.error { color:#c0392b; }
 /* Per-card three-dot (...) actions menu (Edit / Delete), anchored bottom-right. */
 .book-menu { position:absolute; bottom:8px; right:8px; }
+/* In the table view the menu lives in an Actions cell, not floating on a card:
+   anchor it in-flow (relative) so its dropdown still positions to the button. */
+.actions-col { width:1%; text-align:right; padding-right:16px; }
+.row-menu { position:relative; bottom:auto; right:auto; display:inline-flex; }
+.row-menu .menu-btn { color:var(--muted); }
+table.books tr:hover .row-menu .menu-btn { color:var(--fg); }
 .menu-btn { width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:20px; line-height:1; transition:background .12s, color .12s; }
 .menu-btn:hover, .menu-btn[aria-expanded="true"] { background:var(--cover-bg); color:var(--fg); }
 /* Popup drops DOWN from the button (the card has no overflow:hidden, so it can
