@@ -6,6 +6,8 @@ Current, authoritative docs (describe the system as built):
   contract, on-disk layout, deployment design, resolved decisions.
 - [DEPLOY.md](DEPLOY.md): deploying the compose stack on any Docker host (with
   notes for a Proxmox LXC), the release flow, and first-run setup.
+- [THEMES.md](THEMES.md): the CSS theming framework and how to add a theme (the
+  token contract, with a Hot Dog Stand worked example).
 
 [proposals/](proposals/): designed but **not implemented**. Specs to build from
 if/when the feature is wanted; nothing here is wired into the running system.
