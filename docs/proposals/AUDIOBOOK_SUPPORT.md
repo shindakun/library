@@ -134,6 +134,28 @@ The decrypt op is just an ffmpeg invocation:
 <out.m4b>`, reporting progress by parsing ffmpeg's `-progress` output (it emits
 `out_time_us` / total, a real percentage, exactly what the job bar wants).
 
+**Gap found in step 2: the existing `/job` contract is synchronous (one request,
+one response, no progress stream).** That is fine for the seconds-long ebook
+ops, but an audiobook decrypt is minutes. So: the audiobook sidecar's decrypt
+runs ffmpeg with `-progress pipe:1`, parses `out_time_us` vs the known total
+duration, and writes the fraction to a **sibling `<output>.progress` JSON file**
+in the shared work dir as it goes. The job response stays synchronous (returns
+when ffmpeg finishes), but the Go side can poll that progress file during the
+call to drive the `/imports` bar (wired in build step 6). This keeps the simple
+request/response contract while still giving a real percentage; no streaming
+HTTP needed.
+
+**Gap found in step 2: `audible-activator` uses the removed Selenium 3 API**
+(`find_element_by_id`, `webdriver.Chrome(executable_path=...)`), so it does not
+run as-is on Selenium 4. Combined with its own README admitting it breaks against
+Audible site changes, the v1 plan is: **the paste-activation-bytes setup path is
+the fully-built, reliable primary**, and the Selenium login retrieval is a
+best-effort secondary (modernized to Selenium 4) that may need re-hardening over
+time. The feature is fully usable via paste even if browser retrieval is down.
+`extract_activation_bytes` is trivial (first 4 bytes of the activation blob,
+byte-swapped to 8 hex chars) and is reimplemented cleanly, not copied from the
+activator's py2 `common.py`.
+
 Like the ebook sidecar, it is wired in compose, optional (an empty
 `AUDIOBOOK_SIDECAR_URL` disables audiobooks, same pattern as the no-DRM mode),
 and mounts the shared work dir.

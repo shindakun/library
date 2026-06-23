@@ -167,12 +167,17 @@ prod-deploy: ## Pull newest images and restart the prod stack in place
 	$(DC_PROD) pull
 	$(DC_PROD) up -d
 
-## ---- DRM setup ----
+## ---- DRM setup (per sidecar) ----
 
-.PHONY: drm-setup
-drm-setup: ## One-time: authorize Adobe + export key into ./secrets (interactive)
+.PHONY: ebook-setup
+ebook-setup: ## One-time: authorize Adobe + export key into ./secrets (interactive)
 	$(DC) build ebook-sidecar
 	$(COMPOSE) -f $(COMPOSE_FILE) run --rm --userns=keep-id ebook-sidecar python /opt/setup.py
+
+.PHONY: audiobook-setup
+audiobook-setup: ## One-time: store Audible activation bytes (BYTES=8hexchars), or use the web form
+	@test -n "$(BYTES)" || { echo "usage: make audiobook-setup BYTES=<8 hex chars>"; exit 1; }
+	curl -fsS -X POST http://localhost:7100/setup -d '{"bytes":"$(BYTES)"}' && echo
 
 ## ---- Housekeeping ----
 

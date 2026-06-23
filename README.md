@@ -25,12 +25,20 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
   `acsm-calibre-plugin` (fulfillment) + DeDRM's `ineptepub` (decryption). Reads
   `/secrets` for the Adobe activation + key, and writes it only during first-run
   setup.
+- **`audiobook-sidecar`** (optional): quarantined ffmpeg worker that removes
+  Audible DRM from a `.aax` (decode with the account activation bytes, copy the
+  audio + chapters to a clean `.m4b`). Holds the activation bytes in `/secrets`.
+  Setup stores pasted activation bytes (`make audiobook-setup BYTES=...`, or the
+  web form). The Go-side import wiring + player are still being built; see
+  [docs/proposals/AUDIOBOOK_SUPPORT.md](docs/proposals/AUDIOBOOK_SUPPORT.md).
 
-The sidecar is **only** needed for legacy-DRM content: `.acsm` loans and
-ADEPT-encrypted `.epub`. If you have none, run **without it**: set `-sidecar=""`
-(or `EBOOK_SIDECAR_URL=""`). Then the first-run Adobe setup form is hidden, no
-sidecar is probed, and comics (`.cbz`/`.cbr`) and DRM-free epubs import normally;
-a `.acsm`/encrypted `.epub` is rejected into `import/failed/` with a clear reason.
+Each sidecar is **only** needed for its DRM'd content and is independently
+optional: the ebook sidecar for `.acsm` loans and ADEPT-encrypted `.epub`, the
+audiobook sidecar for `.aax`. Run with one, the other, both, or neither. With a
+sidecar disabled (empty `EBOOK_SIDECAR_URL` / `AUDIOBOOK_SIDECAR_URL`), its setup
+form is hidden, it is not probed, and its DRM'd inputs are rejected into
+`import/failed/` with a clear reason; comics (`.cbz`/`.cbr`) and DRM-free epubs
+always import without any sidecar.
 
 Any OPDS client points at `http://<host>:8080/opds` to browse and download over
 WiFi (the Xteink X4 is the verified test device, but it is standard OPDS 1.2).
@@ -78,7 +86,8 @@ make lint            # golangci-lint
 make hooks           # install the git pre-commit hook (gofmt/vet/lint/markdownlint)
 
 # Run the local stack (dev: builds images, macOS/Podman)
-make drm-setup       # ONE-TIME: authorize Adobe + export key into ./secrets (or use the web form)
+make ebook-setup     # ONE-TIME: authorize Adobe + export key into ./secrets (or use the web form)
+make audiobook-setup BYTES=...  # ONE-TIME: store Audible activation bytes (or use the web form)
 make up              # build images + start the stack (LAN IP auto-detected)
 make ps              # stack status
 make logs            # follow logs

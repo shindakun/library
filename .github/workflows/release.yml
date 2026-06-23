@@ -24,6 +24,9 @@ jobs:
           - name: ebook-sidecar
             context: docker/ebook-sidecar
             dockerfile: docker/ebook-sidecar/Dockerfile
+          - name: audiobook-sidecar
+            context: docker/audiobook-sidecar
+            dockerfile: docker/audiobook-sidecar/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

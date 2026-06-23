@@ -28,12 +28,14 @@ services:
       # OPDS feed emits links the device can actually fetch. Override per-host.
       LIBRARY_BASE_URL: ${LIBRARY_BASE_URL:-http://localhost:8080}
       EBOOK_SIDECAR_URL: http://ebook-sidecar:7000
+      AUDIOBOOK_SIDECAR_URL: http://audiobook-sidecar:7100
     volumes:
       - ../data:/data:z         # books, catalog.db, import/ (watched)
     networks:
       - libnet
     depends_on:
       - ebook-sidecar
+      - audiobook-sidecar
     restart: unless-stopped
 
   ebook-sidecar:
@@ -49,6 +51,21 @@ services:
       - ../secrets:/secrets:Z    # activation + .der key; writable so the web
                                  # first-run setup can populate it (Z = private relabel)
       - ../data:/data:z          # same data volume; sidecar reads import/, writes results there
+    networks:
+      - libnet
+    restart: unless-stopped
+
+  # Audiobook DRM (Audible .aax -> clean .m4b via ffmpeg). Optional, like the
+  # ebook sidecar: unset AUDIOBOOK_SIDECAR_URL on the library service to disable.
+  audiobook-sidecar:
+    build: ./audiobook-sidecar
+    userns_mode: keep-id
+    environment:
+      SECRETS_DIR: /secrets
+      WORK_DIR: /data/import/work # same scratch dir, OUTSIDE the watched root
+    volumes:
+      - ../secrets:/secrets:Z    # holds audible_activation_bytes; writable for setup
+      - ../data:/data:z
     networks:
       - libnet
     restart: unless-stopped
