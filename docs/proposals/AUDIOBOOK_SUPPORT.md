@@ -34,6 +34,11 @@ or sharing mechanism.
   directly. The paste path keeps the feature usable if Selenium breaks against an
   Audible change; login is the no-prior-tooling path.
 - **v1 = `.aax`.** `.aaxc` (voucher-key) is a fast-follow (§4.3).
+- **Sidecar lifecycle: always-running, lazy browser.** Sidecars start with the
+  stack (not on demand, which would need Docker-socket access from the Go
+  service). The audiobook sidecar idles as just the ffmpeg-capable server;
+  Selenium/Chromium is a subprocess spawned only during setup and never kept
+  warm (§3.1).
 
 ## 1. What an `.aax` is, and the one real wrinkle
 
@@ -132,6 +137,28 @@ The decrypt op is just an ffmpeg invocation:
 Like the ebook sidecar, it is wired in compose, optional (an empty
 `AUDIOBOOK_SIDECAR_URL` disables audiobooks, same pattern as the no-DRM mode),
 and mounts the shared work dir.
+
+### 3.1 Sidecar lifecycle (decided): always-running, lazy browser
+
+Sidecars stay **always-running** (started by compose with the stack), NOT
+started on demand. On-demand would save idle RAM but would require the Go service
+to talk to the container runtime to start a sidecar, breaking the deliberate
+"Go service has no Docker-socket access" hardening boundary, and would add
+cold-start latency on every first import. Not worth it for a single-user deploy.
+
+The real weight is the headless browser. So the rule: the **audiobook sidecar
+idles as only the lightweight ffmpeg-capable Python HTTP server** (~50 MB,
+~0 CPU). Selenium + Chromium is spawned as a **subprocess only during
+`/setup`** (the one-time activation-bytes retrieval) and exits when setup
+returns. It is never kept warm. Decryption jobs (`/job`) use ffmpeg only and
+never touch the browser. This gives the savings of on-demand (no warm browser,
+nothing running for a disabled sidecar) without the Docker-socket escalation.
+
+Idle cost with both sidecars enabled is roughly ~100 MB RAM total and ~0 CPU;
+each is independently optional, so you pay nothing for a sidecar you don't
+enable ("none"). If true on-demand is ever wanted (RAM-constrained, rare
+imports), the clean path is a compose `profiles` group started manually before a
+batch, not auto-start from the Go service.
 
 ## 4. Import flow (what reuses, what is new)
 
