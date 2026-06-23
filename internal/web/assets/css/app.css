@@ -3,7 +3,7 @@
    THEMING FRAMEWORK
    -----------------
    A theme is one block that defines the full variable contract below. To add a
-   theme: copy a block, change the [data-theme="name"] selector, retune the
+   theme: copy a block, change the :root[data-theme="name"] selector, retune the
    values, and add the name to the picker in app.js (THEMES) + the labels. The
    rest of the stylesheet only ever reads var(--token), never a raw color, so a
    new theme needs no other CSS changes.
@@ -42,8 +42,12 @@
   }
 }
 
-/* --- Named themes (explicit picker selection) --- */
-[data-theme="light"] {
+/* --- Named themes (explicit picker selection) ---
+   Scoped to :root (the <html> element) so a theme block ONLY retones the
+   document root. An unscoped [data-theme="x"] would re-theme ANY element that
+   happens to carry that attribute (e.g. a theme-picker menu item), which is wrong
+   and unreadable. The variable contract lives only at the root. */
+:root[data-theme="light"] {
   --bg:#f7f7f8; --fg:#1a1a1a; --muted:#666; --faint:#777;
   --panel:#fff; --border:#e3e3e6; --cover-bg:#e9e9ee;
   --input-border:#ccc; --accent:#2a6; --accent-fg:#fff;
@@ -51,7 +55,7 @@
   --link:#444; --btn-border:#ccc; --bar:#fff;
   --shadow:0 1px 3px rgba(0,0,0,.08); --radius:10px;
 }
-[data-theme="dark"] {
+:root[data-theme="dark"] {
   color-scheme: dark;
   --bg:#16181c; --fg:#e6e6e8; --muted:#9aa0a8; --faint:#888;
   --panel:#1f2228; --border:#30343c; --cover-bg:#2a2e36;
@@ -61,7 +65,7 @@
   --shadow:0 2px 8px rgba(0,0,0,.4); --radius:10px;
 }
 /* Warm: a cozy "personal library" palette, soft paper + amber accent. */
-[data-theme="warm"] {
+:root[data-theme="warm"] {
   color-scheme: dark;
   --bg:#241d18; --fg:#f0e7da; --muted:#bba898; --faint:#9c8a78;
   --panel:#2e2620; --border:#473a30; --cover-bg:#3a2f27;

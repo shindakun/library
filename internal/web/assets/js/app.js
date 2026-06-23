@@ -3,7 +3,7 @@
 // pre-paint theme-apply runs inline in each page's <head> to avoid a flash.
 
 // THEMES is the source of truth for the picker. To add a theme, add an entry
-// here AND a matching [data-theme="id"] block in app.css. icon is shown on the
+// here AND a matching :root[data-theme="id"] block in app.css. icon is shown on the
 // picker button when that theme is active.
 var THEMES = [
   { id: "dark", label: "Dark", icon: "🌙" },   // 🌙
@@ -65,7 +65,10 @@ function wireThemePicker() {
       const b = document.createElement("button");
       b.type = "button";
       b.setAttribute("role", "menuitemradio");
-      b.dataset.theme = t.id;
+      // NOTE: use data-theme-id, NOT data-theme: the CSS theme selectors match
+      // [data-theme="x"], so a data-theme here would re-theme the menu item to
+      // its own palette (unreadable). The selectors are also :root-scoped now.
+      b.dataset.themeId = t.id;
       b.textContent = t.icon + "  " + t.label;
       b.addEventListener("click", function () {
         setTheme(t.id);
@@ -80,7 +83,7 @@ function wireThemePicker() {
   function markActive() {
     const cur = currentThemeId();
     pop.querySelectorAll("button").forEach(function (b) {
-      b.setAttribute("aria-checked", String(b.dataset.theme === cur));
+      b.setAttribute("aria-checked", String(b.dataset.themeId === cur));
     });
   }
   btn.setAttribute("aria-haspopup", "true");
