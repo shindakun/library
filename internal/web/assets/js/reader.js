@@ -21,19 +21,10 @@
     .then(buf => {
       const book = ePub(buf);
       rendition = book.renderTo("viewer", { width: "100%", height: "100%", flow: "paginated" });
-      // Register themes epub.js injects into the book iframe. The `!important`
-      // is required: the book's own stylesheet (and epub.js's injected CSS)
-      // otherwise win over a plain rule and the change wouldn't show.
-      rendition.themes.register("dark", {
-        "body": { "background": "#16181c !important", "color": "#d8d8db !important" },
-        "p, div, span, h1, h2, h3, h4, h5, h6, li": { "color": "#d8d8db !important" },
-        "a": { "color": "#9ad !important" }
-      });
-      rendition.themes.register("light", {
-        "body": { "background": "#ffffff !important", "color": "#1a1a1a !important" }
-      });
-      // Select the theme BEFORE first paint so the book renders correctly the
-      // first time (no re-display needed here; that is only for live toggles).
+      // The book iframe is themed from the CURRENT page theme's CSS variables
+      // (read live), so it matches whatever app theme is active, dark, light,
+      // warm, or any future theme, with no per-theme duplication here. Applied
+      // before first paint so the book renders correct the first time.
       applyReaderTheme();
       return rendition.display();
     })
@@ -57,13 +48,24 @@
       console.error("reader:", err);
     });
 
-  // Select the current theme on the rendition; epub.js applies it on the
-  // next/initial render. Also updates the toggle button.
+  // Theme the book iframe to match the page. Reads the current theme's CSS
+  // variables off <html> so it tracks ANY app theme (the picker button icon is
+  // owned by app.js's syncThemeButton; we must NOT touch it here). The
+  // `!important` is required: the book's own stylesheet and epub.js's injected
+  // CSS otherwise win over a plain rule.
   function applyReaderTheme() {
-    const dark = document.documentElement.getAttribute("data-theme") === "dark";
-    const btn = document.getElementById("theme-btn");
-    if (btn) btn.textContent = dark ? "☀️" : "🌙";
-    if (rendition && rendition.themes) rendition.themes.select(dark ? "dark" : "light");
+    if (!rendition || !rendition.themes) return;
+    const cs = getComputedStyle(document.documentElement);
+    const bg = cs.getPropertyValue("--bg").trim() || "#ffffff";
+    const fg = cs.getPropertyValue("--fg").trim() || "#1a1a1a";
+    const link = cs.getPropertyValue("--link").trim() || fg;
+    // Re-register under a single stable name with the live colors, then select.
+    rendition.themes.register("app", {
+      "body": { "background": bg + " !important", "color": fg + " !important" },
+      "p, div, span, h1, h2, h3, h4, h5, h6, li": { "color": fg + " !important" },
+      "a": { "color": link + " !important" }
+    });
+    rendition.themes.select("app");
   }
 
   // On a USER toggle, the book iframe is already painted and epub.js's
