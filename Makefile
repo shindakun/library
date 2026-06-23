@@ -101,9 +101,22 @@ check-clock: ## Warn if the Podman VM clock is skewed (used as an `up` guard)
 images: ## Build both container images
 	$(DC) build
 
+# Services are started ONE AT A TIME (not in a single `up`) on purpose. On
+# rootless Podman, creating/starting several `userns_mode: keep-id` containers
+# concurrently races in the docker-compat layer and crun intermittently rejects
+# the container (seen as either a ping_group_range or a devpts mount "Invalid
+# argument" error). Serializing the starts avoids the race entirely; a clean
+# `up` then succeeds every time. Sidecars come up before the library, which
+# depends on them. SERVICES lists them in start order.
+SERVICES := ebook-sidecar audiobook-sidecar library
+
 .PHONY: up
 up: check-clock ## Build (if needed) and start the stack in the background
-	LIBRARY_BASE_URL=$(LIBRARY_BASE_URL) $(DC) up -d --build
+	$(DC) build
+	@for svc in $(SERVICES); do \
+		echo ">> starting $$svc"; \
+		LIBRARY_BASE_URL=$(LIBRARY_BASE_URL) $(DC) up -d --no-deps $$svc || exit $$?; \
+	done
 
 .PHONY: down
 down: ## Stop and remove the stack
