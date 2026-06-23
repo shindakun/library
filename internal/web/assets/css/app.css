@@ -232,6 +232,7 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 .edit-wrap textarea { resize:vertical; }
 .edit-actions { display:flex; align-items:center; gap:14px; margin-top:4px; }
 .edit-actions button { padding:9px 16px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
+.edit-actions button:disabled { opacity:.6; cursor:progress; }
 .edit-actions .cancel { color:var(--muted); text-decoration:none; font-size:14px; }
 .edit-actions .cancel:hover { text-decoration:underline; }
 .edit-status { font-size:13px; color:var(--muted); }

@@ -7,11 +7,21 @@
   const status = document.getElementById("edit-status");
   if (!form) return;
   const slug = window.BOOK_SLUG;
+  const saveBtn = form.querySelector('button[type="submit"]');
+  const saveLabel = saveBtn ? saveBtn.textContent : "Save";
 
   function say(msg, isError) {
     if (!status) return;
     status.textContent = msg;
     status.classList.toggle("error", !!isError);
+  }
+
+  // setSaving disables the Save button while a save (and its file embed) is in
+  // flight, so it can't be double-submitted, and shows a "Saving…" label.
+  function setSaving(busy) {
+    if (!saveBtn) return;
+    saveBtn.disabled = busy;
+    saveBtn.textContent = busy ? "Saving…" : saveLabel;
   }
 
   form.addEventListener("submit", function (ev) {
@@ -29,6 +39,7 @@
       description: f.description.value,
     };
     say("Saving…", false);
+    setSaving(true);
 
     fetch("/api/books/" + encodeURIComponent(slug), {
       method: "PUT",
@@ -48,13 +59,15 @@
         // tracked job. Follow it over the import SSE stream so the bar fills.
         say("Saved. Embedding into the file…", false);
         if (data.jobId) {
-          watchEmbed(data.jobId);
+          watchEmbed(data.jobId); // re-enables Save when the embed job ends
         } else {
           say("Saved.", false);
+          setSaving(false);
         }
       })
       .catch(function (err) {
         say(err.message || "Save failed.", true);
+        setSaving(false);
       });
   });
 
@@ -69,9 +82,23 @@
     }
     if (!window.EventSource) {
       say("Saved. Embedding in the background…", false);
+      setSaving(false); // can't track it without SSE; allow further edits
       return;
     }
     const es = new EventSource("/api/imports/stream");
+    // Safety net: if no terminal event ever arrives (stream drops, job pruned),
+    // stop waiting after 2 min so the Save button can't stay disabled forever.
+    const guard = setTimeout(function () {
+      es.close();
+      setSaving(false);
+    }, 120000);
+    function finish(msg, isError) {
+      if (bar) bar.hidden = true;
+      say(msg, !!isError);
+      clearTimeout(guard);
+      es.close();
+      setSaving(false);
+    }
     es.onmessage = function (ev) {
       let job;
       try {
@@ -88,17 +115,11 @@
         }
         say("Embedding into the file… " + (job.detail || ""), false);
       } else if (job.state === "done") {
-        if (bar) bar.hidden = true;
-        say("Saved and embedded in the file.", false);
-        es.close();
+        finish("Saved and embedded in the file.", false);
       } else if (job.state === "skipped") {
-        if (bar) bar.hidden = true;
-        say("Saved. Not embedded in file: " + (job.error || "unknown"), false);
-        es.close();
+        finish("Saved. Not embedded in file: " + (job.error || "unknown"), false);
       } else if (job.state === "failed") {
-        if (bar) bar.hidden = true;
-        say("Saved, but embedding failed: " + (job.error || "unknown"), true);
-        es.close();
+        finish("Saved, but embedding failed: " + (job.error || "unknown"), true);
       }
     };
   }
