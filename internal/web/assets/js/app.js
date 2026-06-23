@@ -1,21 +1,99 @@
-// Shared client behavior for the library UI: theme toggle, view toggle, and
+// Shared client behavior for the library UI: theme picker, view toggle, and
 // client-side table sorting. Loaded with `defer`, so the DOM is ready. The tiny
 // pre-paint theme-apply runs inline in each page's <head> to avoid a flash.
 
-function toggleTheme() {
+// THEMES is the source of truth for the picker. To add a theme, add an entry
+// here AND a matching [data-theme="id"] block in app.css. icon is shown on the
+// picker button when that theme is active.
+var THEMES = [
+  { id: "dark", label: "Dark", icon: "🌙" },   // 🌙
+  { id: "light", label: "Light", icon: "☀️" }, // ☀️
+  { id: "warm", label: "Warm", icon: "🕯️" }, // 🕯️ candle
+];
+
+// setTheme applies a theme by id, persists it, updates the button, and notifies
+// the reader (which repaints the book iframe). Passing null clears the override
+// so the page follows the OS preference again.
+function setTheme(id) {
   const el = document.documentElement;
-  const dark = el.getAttribute("data-theme") !== "dark";
-  el.setAttribute("data-theme", dark ? "dark" : "light");
-  localStorage.setItem("theme", dark ? "dark" : "light");
+  if (id) {
+    el.setAttribute("data-theme", id);
+    localStorage.setItem("theme", id);
+  } else {
+    el.removeAttribute("data-theme");
+    localStorage.removeItem("theme");
+  }
   syncThemeButton();
-  // The reader overrides this to also repaint the book iframe.
   if (typeof window.onThemeChange === "function") window.onThemeChange();
+}
+
+// currentThemeId returns the active theme id, resolving the OS default when no
+// explicit theme is set.
+function currentThemeId() {
+  const set = document.documentElement.getAttribute("data-theme");
+  if (set) return set;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function syncThemeButton() {
   const btn = document.getElementById("theme-btn");
-  if (btn) btn.textContent =
-    document.documentElement.getAttribute("data-theme") === "dark" ? "☀️" : "🌙";
+  if (!btn) return;
+  const t = THEMES.find((t) => t.id === currentThemeId()) || THEMES[0];
+  btn.textContent = t.icon;
+  btn.setAttribute("title", "Theme: " + t.label);
+}
+
+// wireThemePicker turns the theme button into a dropdown of themes.
+function wireThemePicker() {
+  const btn = document.getElementById("theme-btn");
+  if (!btn) return;
+  let pop = document.getElementById("theme-pop");
+  if (!pop) {
+    // Wrap the button so the popup anchors to IT (works in both the index header
+    // and the reader bar, which have different heights).
+    const wrap = document.createElement("span");
+    wrap.className = "theme-menu";
+    btn.parentElement.insertBefore(wrap, btn);
+    wrap.appendChild(btn);
+
+    pop = document.createElement("div");
+    pop.id = "theme-pop";
+    pop.className = "theme-pop";
+    pop.setAttribute("role", "menu");
+    pop.hidden = true;
+    THEMES.forEach(function (t) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "menuitemradio");
+      b.dataset.theme = t.id;
+      b.textContent = t.icon + "  " + t.label;
+      b.addEventListener("click", function () {
+        setTheme(t.id);
+        markActive();
+        pop.hidden = true;
+        btn.setAttribute("aria-expanded", "false");
+      });
+      pop.appendChild(b);
+    });
+    wrap.appendChild(pop);
+  }
+  function markActive() {
+    const cur = currentThemeId();
+    pop.querySelectorAll("button").forEach(function (b) {
+      b.setAttribute("aria-checked", String(b.dataset.theme === cur));
+    });
+  }
+  btn.setAttribute("aria-haspopup", "true");
+  btn.setAttribute("aria-expanded", "false");
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    const open = pop.hidden;
+    markActive();
+    pop.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", function () { pop.hidden = true; btn.setAttribute("aria-expanded", "false"); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") pop.hidden = true; });
 }
 
 // --- View mode (index): grid | table, persisted ---
@@ -123,6 +201,7 @@ function wireBookMenus() {
 
 document.addEventListener("DOMContentLoaded", function () {
   syncThemeButton();
+  wireThemePicker();
   // Restore the persisted view now that <body> exists.
   if (localStorage.getItem("view") === "table")
     document.body.setAttribute("data-view", "table");

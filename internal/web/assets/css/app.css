@@ -1,6 +1,26 @@
-/* Shared styles for the library UI (index grid/table + reader).
-   Light theme by default; dark via [data-theme="dark"] on <html>.
-   Colors are CSS variables so both themes share one rule set. */
+/* Shared styles for the library UI (grid/table, reader, edit, imports).
+
+   THEMING FRAMEWORK
+   -----------------
+   A theme is one block that defines the full variable contract below. To add a
+   theme: copy a block, change the [data-theme="name"] selector, retune the
+   values, and add the name to the picker in app.js (THEMES) + the labels. The
+   rest of the stylesheet only ever reads var(--token), never a raw color, so a
+   new theme needs no other CSS changes.
+
+   Selection: no [data-theme] attribute -> :root defaults follow the OS
+   (light, or the dark media block below). An explicit [data-theme="x"] on
+   <html> (set by the picker / pre-paint script) overrides the OS default.
+
+   Contract (every theme MUST define all of these):
+     --bg --fg --muted --faint          page + text tones
+     --panel --border --cover-bg        surfaces, dividers, image placeholders
+     --input-border --btn-border        control outlines
+     --accent --accent-fg               primary action color + its text
+     --banner-bg --banner-border --banner-fg   info banner
+     --link --bar                       reader link, reader top bar
+     --shadow --radius                  elevation + corner rounding (polish)
+*/
 
 :root {
   --bg:#f7f7f8; --fg:#1a1a1a; --muted:#666; --faint:#777;
@@ -8,19 +28,62 @@
   --input-border:#ccc; --accent:#2a6; --accent-fg:#fff;
   --banner-bg:#eef9f0; --banner-border:#cfe8d4; --banner-fg:#1c6b34;
   --link:#444; --btn-border:#ccc; --bar:#fff;
+  --shadow:0 1px 3px rgba(0,0,0,.08); --radius:10px;
+}
+/* OS prefers dark and the user hasn't picked a theme -> use dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { color-scheme: dark;
+    --bg:#16181c; --fg:#e6e6e8; --muted:#9aa0a8; --faint:#888;
+    --panel:#1f2228; --border:#30343c; --cover-bg:#2a2e36;
+    --input-border:#3a3f48; --accent:#3a9; --accent-fg:#0c0f12;
+    --banner-bg:#173a26; --banner-border:#235c3a; --banner-fg:#7fdca0;
+    --link:#bcd; --bar:#1f2228; --btn-border:#3a3f48;
+    --shadow:0 2px 8px rgba(0,0,0,.4); --radius:10px;
+  }
+}
+
+/* --- Named themes (explicit picker selection) --- */
+[data-theme="light"] {
+  --bg:#f7f7f8; --fg:#1a1a1a; --muted:#666; --faint:#777;
+  --panel:#fff; --border:#e3e3e6; --cover-bg:#e9e9ee;
+  --input-border:#ccc; --accent:#2a6; --accent-fg:#fff;
+  --banner-bg:#eef9f0; --banner-border:#cfe8d4; --banner-fg:#1c6b34;
+  --link:#444; --btn-border:#ccc; --bar:#fff;
+  --shadow:0 1px 3px rgba(0,0,0,.08); --radius:10px;
 }
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg:#16181c; --fg:#e6e6e8; --muted:#9aa0a8; --faint:#888;
   --panel:#1f2228; --border:#30343c; --cover-bg:#2a2e36;
   --input-border:#3a3f48; --accent:#3a9; --accent-fg:#0c0f12;
   --banner-bg:#173a26; --banner-border:#235c3a; --banner-fg:#7fdca0;
   --link:#bcd; --btn-border:#3a3f48; --bar:#1f2228;
+  --shadow:0 2px 8px rgba(0,0,0,.4); --radius:10px;
+}
+/* Warm: a cozy "personal library" palette, soft paper + amber accent. */
+[data-theme="warm"] {
+  color-scheme: dark;
+  --bg:#241d18; --fg:#f0e7da; --muted:#bba898; --faint:#9c8a78;
+  --panel:#2e2620; --border:#473a30; --cover-bg:#3a2f27;
+  --input-border:#54453a; --accent:#d8975a; --accent-fg:#241a10;
+  --banner-bg:#3a2c1c; --banner-border:#5c4327; --banner-fg:#e7be86;
+  --link:#e6c9a0; --btn-border:#54453a; --bar:#2e2620;
+  --shadow:0 3px 12px rgba(0,0,0,.45); --radius:12px;
 }
 
 body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background:var(--bg); color:var(--fg); }
 
 /* --- Header (index) --- */
 header { padding: 16px 24px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; gap:16px; align-items:center; }
+/* Theme picker: a relative wrapper around the button so the dropdown anchors to
+   it in both the header and the reader bar. */
+.theme-menu { position:relative; display:inline-flex; }
+.theme-pop { position:absolute; top:calc(100% + 8px); right:0; min-width:130px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:5px; display:none; flex-direction:column; z-index:30; }
+.theme-pop:not([hidden]) { display:flex; }
+.theme-pop button { display:flex; align-items:center; gap:6px; width:100%; text-align:left; padding:8px 12px; border:none; background:none; color:var(--fg); font-size:13px; border-radius:6px; cursor:pointer; font-family:inherit; }
+.theme-pop button:hover { background:var(--cover-bg); }
+.theme-pop button[aria-checked="true"] { font-weight:600; }
+.theme-pop button[aria-checked="true"]::after { content:"✓"; margin-left:auto; color:var(--accent); }
 header h1 { font-size:18px; margin:0; }
 header form.upload { margin-left:auto; }
 header .nav-import { margin-left:auto; padding:7px 12px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; text-decoration:none; font-size:14px; }
@@ -29,13 +92,17 @@ header .nav-import:hover { opacity:.9; }
    the edit page header, which has just a title + toggle), matching every other
    page where the toggle sits at the far right. Harmless where an earlier element
    already takes the auto margin. */
-header > .theme-toggle:last-child { margin-left:auto; }
-input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); border-radius:8px; width:260px; background:var(--panel); color:var(--fg); }
+header > .theme-toggle:last-child,
+header > .theme-menu:last-child { margin-left:auto; }
+input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); border-radius:8px; width:260px; background:var(--bg); color:var(--fg); transition:border-color .12s, box-shadow .12s; }
+input[type=search]:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.nav-import:hover, .upload button:hover { filter:brightness(1.06); }
 .upload { display:flex; gap:8px; align-items:center; }
 .upload input[type=file]{ font-size:13px; max-width:230px; color:var(--fg); }
-.upload button{ padding:7px 12px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; }
-.theme-toggle{ padding:7px 10px; border:1px solid var(--input-border); background:var(--panel); color:var(--fg); border-radius:8px; cursor:pointer; font-size:15px; line-height:1; }
-.view-toggle{ padding:7px 10px; border:1px solid var(--input-border); background:var(--panel); color:var(--fg); border-radius:8px; cursor:pointer; font-size:14px; line-height:1; }
+.upload button{ padding:7px 12px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; transition:filter .12s; }
+.theme-toggle{ padding:7px 10px; border:1px solid var(--input-border); background:var(--panel); color:var(--fg); border-radius:8px; cursor:pointer; font-size:15px; line-height:1; transition:background .12s, border-color .12s; }
+.view-toggle{ padding:7px 10px; border:1px solid var(--input-border); background:var(--panel); color:var(--fg); border-radius:8px; cursor:pointer; font-size:14px; line-height:1; transition:background .12s, border-color .12s; }
+.theme-toggle:hover, .view-toggle:hover { background:var(--cover-bg); border-color:var(--accent); }
 .banner{ background:var(--banner-bg); border-bottom:1px solid var(--banner-border); color:var(--banner-fg); padding:8px 24px; font-size:13px; }
 .empty { padding:48px 24px; color:var(--faint); }
 
@@ -50,9 +117,10 @@ input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); bord
 .setup .hint { font-size:12px; color:var(--faint); }
 
 /* --- Grid (cover) view --- */
-.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:20px; padding:24px; }
-.card { position:relative; background:var(--panel); border:1px solid var(--border); border-radius:10px; display:flex; flex-direction:column; }
-.card > a.open { border-radius:10px 10px 0 0; overflow:hidden; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:22px; padding:26px; }
+.card { position:relative; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); display:flex; flex-direction:column; box-shadow:var(--shadow); transition:transform .14s ease, box-shadow .14s ease, border-color .14s ease; }
+.card:hover { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.18); border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.card > a.open { border-radius:var(--radius) var(--radius) 0 0; overflow:hidden; }
 .card a.open { text-decoration:none; color:inherit; display:block; }
 .cover { aspect-ratio:2/3; background:var(--cover-bg) center/cover no-repeat; display:block; }
 .card .t { display:block; padding:10px 12px 0; font-weight:600; font-size:14px; line-height:1.3; }

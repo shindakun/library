@@ -7,10 +7,10 @@
 <link rel="stylesheet" href="/static/css/app.css">
 <script>
   (function () {
+    // Apply a saved theme name before paint to avoid a flash; no saved value
+    // means follow the OS (handled by :root + the prefers-color-scheme block).
     const saved = localStorage.getItem("theme");
-    const dark = saved ? saved === "dark"
-                       : matchMedia("(prefers-color-scheme: dark)").matches;
-    if (dark) document.documentElement.setAttribute("data-theme", "dark");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
   })();
   window.BOOK_SLUG = "{{.Book.Slug}}";
 </script>
@@ -20,7 +20,7 @@
 <body>
 <header>
   <h1><a class="home" href="/">Library</a> / Edit</h1>
-  <button id="theme-btn" class="theme-toggle" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">&#127769;</button>
+  <button id="theme-btn" class="theme-toggle" type="button" title="Theme" aria-label="Theme">&#127769;</button>
 </header>
 
 <div class="edit-wrap">

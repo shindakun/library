@@ -8,10 +8,10 @@
 <script>
   // Pre-paint theme apply (inline so there is no flash before app.js loads).
   (function () {
+    // Apply a saved theme name before paint to avoid a flash; no saved value
+    // means follow the OS (handled by :root + the prefers-color-scheme block).
     const saved = localStorage.getItem("theme");
-    const dark = saved ? saved === "dark"
-                       : matchMedia("(prefers-color-scheme: dark)").matches;
-    if (dark) document.documentElement.setAttribute("data-theme", "dark");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
   })();
 </script>
 <script src="/static/js/app.js" defer></script>
@@ -26,7 +26,7 @@
   </form>
   <button id="view-btn" class="view-toggle" type="button" onclick="toggleView()" title="Toggle grid/table view">Table</button>
   {{end}}
-  <button id="theme-btn" class="theme-toggle" type="button" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+  <button id="theme-btn" class="theme-toggle" type="button" title="Theme" aria-label="Theme">🌙</button>
 </header>
 {{if .NeedsSetup}}
 <div class="setup">
