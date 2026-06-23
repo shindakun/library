@@ -316,7 +316,13 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string, onProgress pr
 		}
 	}
 
-	// DRM path: fulfill (.acsm only) then decrypt via the sidecar.
+	// DRM path: fulfill (.acsm only) then decrypt via the sidecar. If DRM is
+	// disabled (no sidecar configured), reject the file with a clear reason: it
+	// cannot be processed here. The import fails into import/failed/ like any other
+	// failed import, so it is visible on the /imports page.
+	if im.DRM == nil {
+		return "", fmt.Errorf("DRM sidecar disabled: cannot process %s (an .acsm or encrypted .epub needs the DRM sidecar)", filepath.Base(hostPath))
+	}
 	in := im.SidecarPath(hostPath)
 	if isACSM {
 		onProgress("fulfilling", 0, "")
@@ -362,7 +368,9 @@ func (im *Importer) convertCBR(hostPath string, onProgress progressFunc) (string
 
 func (im *Importer) fail(hostPath string, cause error) {
 	fmt.Fprintf(os.Stderr, "import: FAILED %s: %v\n", filepath.Base(hostPath), cause)
-	dst := filepath.Join(im.ImportDir, "failed", filepath.Base(hostPath))
+	failedDir := filepath.Join(im.ImportDir, "failed")
+	_ = os.MkdirAll(failedDir, 0o755) // self-heal if the subdir was removed
+	dst := filepath.Join(failedDir, filepath.Base(hostPath))
 	if err := moveFile(hostPath, dst); err != nil {
 		fmt.Fprintf(os.Stderr, "import: could not move %s to failed/: %v\n", filepath.Base(hostPath), err)
 		return
@@ -375,7 +383,9 @@ func (im *Importer) fail(hostPath string, cause error) {
 // archive moves a processed original into the given import subdir (done/failed),
 // logging on failure. A stuck original would otherwise be reprocessed.
 func (im *Importer) archive(hostPath, sub string) {
-	dst := filepath.Join(im.ImportDir, sub, filepath.Base(hostPath))
+	subDir := filepath.Join(im.ImportDir, sub)
+	_ = os.MkdirAll(subDir, 0o755) // self-heal if the subdir was removed
+	dst := filepath.Join(subDir, filepath.Base(hostPath))
 	if err := moveFile(hostPath, dst); err != nil {
 		fmt.Fprintf(os.Stderr, "import: could not archive %s to %s/: %v\n", filepath.Base(hostPath), sub, err)
 	}

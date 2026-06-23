@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/steve/library/internal/catalog"
@@ -230,5 +231,57 @@ func writeCBZ(t *testing.T, path string, entries map[string][]byte) {
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestImportDRMFileWithoutSidecar verifies that with DRM disabled (DRM == nil),
+// a dropped .acsm fails cleanly into import/failed/ instead of panicking on a nil
+// sidecar client. Comics/DRM-free epubs are covered by TestImportComicEndToEnd.
+func TestImportDRMFileWithoutSidecar(t *testing.T) {
+	dir := t.TempDir()
+	importDir := filepath.Join(dir, "import")
+	libraryDir := filepath.Join(dir, "library")
+	for _, d := range []string{importDir, libraryDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), libraryDir, filepath.Join(dir, "covers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cat.Close() })
+
+	src := filepath.Join(importDir, "loan.acsm")
+	if err := os.WriteFile(src, []byte("<fulfillmentToken/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	im := &Importer{
+		Cat:         cat,
+		DRM:         nil, // sidecar disabled
+		ImportDir:   importDir,
+		LibraryDir:  libraryDir,
+		SidecarPath: func(p string) string { return p },
+	}
+	im.handle(context.Background(), src) // must not panic
+
+	// The .acsm must have failed into import/failed/, not be in the library.
+	if _, err := os.Stat(filepath.Join(importDir, "failed", "loan.acsm")); err != nil {
+		t.Errorf("DRM file should land in import/failed/ when sidecar disabled: %v", err)
+	}
+	if books, _ := cat.List(context.Background(), catalog.ListOptions{}); len(books) != 0 {
+		t.Errorf("a DRM file must not be cataloged with no sidecar; got %d books", len(books))
+	}
+	// The job should be marked failed with a clear reason.
+	var failed *Job
+	for _, j := range im.JobRegistry().Snapshot() {
+		failed = j
+	}
+	if failed == nil || failed.State != StateFailed {
+		t.Fatalf("job state = %v, want failed", failed)
+	}
+	if !strings.Contains(failed.Err, "DRM sidecar disabled") {
+		t.Errorf("failure reason = %q, want it to mention DRM sidecar disabled", failed.Err)
 	}
 }

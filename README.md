@@ -21,9 +21,16 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
   reader (epub.js for books, a built-in image-sequence viewer for comics), OPDS
   1.2 feed, import watcher (the `ingest` package), upload endpoint. Never imports
   Python.
-- **`drm-sidecar`**: quarantined Python worker. Runs `acsm-calibre-plugin`
-  (fulfillment) + DeDRM's `ineptepub` (decryption). Reads `/secrets` for the
-  Adobe activation + key, and writes it only during first-run setup.
+- **`drm-sidecar`** (optional): quarantined Python worker. Runs
+  `acsm-calibre-plugin` (fulfillment) + DeDRM's `ineptepub` (decryption). Reads
+  `/secrets` for the Adobe activation + key, and writes it only during first-run
+  setup.
+
+The sidecar is **only** needed for legacy-DRM content: `.acsm` loans and
+ADEPT-encrypted `.epub`. If you have none, run **without it**: set `-sidecar=""`
+(or `DRM_SIDECAR_URL=""`). Then the first-run Adobe setup form is hidden, no
+sidecar is probed, and comics (`.cbz`/`.cbr`) and DRM-free epubs import normally;
+a `.acsm`/encrypted `.epub` is rejected into `import/failed/` with a clear reason.
 
 Any OPDS client points at `http://<host>:8080/opds` to browse and download over
 WiFi (the Xteink X4 is the verified test device, but it is standard OPDS 1.2).

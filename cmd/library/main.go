@@ -84,8 +84,17 @@ func main() {
 	mux := http.NewServeMux()
 
 	// DRM sidecar client: drives fulfill/decrypt, and backs the web first-run
-	// setup form. Created before the web server so it can be handed in.
-	drmClient := drm.New(*sidecarURL)
+	// setup form. An empty -sidecar URL DISABLES DRM entirely (no sidecar): the
+	// client is nil, so the setup form is hidden, no health probe runs, and DRM
+	// imports (.acsm / ADEPT .epub) fail clearly. Comics and DRM-free epubs import
+	// fine. This is the right default for anyone with no legacy-DRM content.
+	var drmClient *drm.Client
+	drmEnabled := strings.TrimSpace(*sidecarURL) != ""
+	if drmEnabled {
+		drmClient = drm.New(*sidecarURL)
+	} else {
+		log.Printf("DRM sidecar disabled (-sidecar empty): comics and DRM-free epubs import; .acsm / encrypted epub will be rejected")
+	}
 
 	// Importer is created before the web server so its job registry can back the
 	// /imports page + SSE stream.
@@ -109,17 +118,21 @@ func main() {
 
 	(&opds.Handler{Cat: cat, BaseURL: *baseURL}).Register(mux)
 
-	// The sidecar may not be up; that's fine, imports just fail until it is.
-	// We probe it once for a friendly startup log.
-	go func() {
-		hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		if err := drmClient.Health(hctx); err != nil {
-			log.Printf("drm sidecar not ready (%v); imports will fail until it is", err)
-		} else {
-			log.Printf("drm sidecar healthy at %s", *sidecarURL)
-		}
-	}()
+	// When DRM is enabled, the sidecar may not be up yet; that's fine. Only DRM
+	// imports need it: .acsm (Adobe fulfillment) and ADEPT-encrypted .epub
+	// (decryption). Comics (.cbz/.cbr) and DRM-free .epub import without ever
+	// touching the sidecar. Probe it once for a friendly startup log.
+	if drmEnabled {
+		go func() {
+			hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			if err := drmClient.Health(hctx); err != nil {
+				log.Printf("drm sidecar not ready (%v); DRM imports (.acsm / ADEPT .epub) will fail until it is, but comics and DRM-free epubs import fine", err)
+			} else {
+				log.Printf("drm sidecar healthy at %s", *sidecarURL)
+			}
+		}()
+	}
 	go func() {
 		if err := importer.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("importer stopped: %v", err)
