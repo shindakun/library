@@ -14,3 +14,6 @@ if/when the feature is wanted; nothing here is wired into the running system.
 
 - [proposals/KOBO_IMPORT.md](proposals/KOBO_IMPORT.md): a host-side helper to
   import Kobo books (Obok-based).
+- [proposals/AUDIOBOOK_SUPPORT.md](proposals/AUDIOBOOK_SUPPORT.md): Audible
+  `.aax` import + DRM removal (a second sidecar), an audio format, and a browser
+  player with chapters.
