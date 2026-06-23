@@ -20,13 +20,6 @@ services:
       context: ..                 # repo root: the Go module is built from here
       dockerfile: docker/Dockerfile
     userns_mode: keep-id
-    # Podman sets net.ipv4.ping_group_range as a default sysctl; under rootless
-    # keep-id its high default value can exceed the userns mapping and crun fails
-    # to start the container ("write to ping_group_range ... are all the IDs
-    # mapped"). We don't need ping in any service, so pin it to a value inside the
-    # mapping. Applied to every keep-id service so start order is deterministic.
-    sysctls:
-      net.ipv4.ping_group_range: "0 0"
     ports:
       - "8080:8080"
     environment:
@@ -48,8 +41,6 @@ services:
   ebook-sidecar:
     build: ./ebook-sidecar
     userns_mode: keep-id
-    sysctls:
-      net.ipv4.ping_group_range: "0 0"  # see library service (rootless keep-id)
     # Not published to the host; only reachable on the internal compose network.
     environment:
       SECRETS_DIR: /secrets
@@ -69,8 +60,6 @@ services:
   audiobook-sidecar:
     build: ./audiobook-sidecar
     userns_mode: keep-id
-    sysctls:
-      net.ipv4.ping_group_range: "0 0"  # see library service (rootless keep-id)
     environment:
       SECRETS_DIR: /secrets
       WORK_DIR: /data/import/work # same scratch dir, OUTSIDE the watched root
