@@ -299,21 +299,29 @@ to open there).
 
 ## 8. Build order
 
-1. **Rename `drm-sidecar` -> `ebook-sidecar`** (its own self-contained step, no
+1. (DONE) **Rename `drm-sidecar` -> `ebook-sidecar`** (its own self-contained step, no
    behavior change): the compose service + dir, `DRM_SIDECAR_URL` ->
    `EBOOK_SIDECAR_URL`, the Go field/var names where they read as generic "DRM"
    (`s.DRM`, `drmClient` -> ebook-specific), and docs (DESIGN/DEPLOY/README).
-   Keep `internal/drm` as the package name (it IS ebook DRM) or rename to
-   `internal/ebookdrm`, decide during build; either way it stays the ebook
-   client. Ship + verify (epub import still works) before adding audiobooks.
-2. `audiobook-sidecar`: new container (ffmpeg + Selenium), `/health`, `/setup`
-   (retrieve-via-login AND paste-bytes), `/job` decrypt (ffmpeg
-   `-activation_bytes`, `-progress` parsing). Optional via empty
-   `AUDIOBOOK_SIDECAR_URL`. Verify decrypt against the 3 real `.aax` test files
-   once the user has extracted their bytes.
-3. `internal/audible.Client` (Go side): reuse the job/health transport shape but
-   with an audiobook `Setup` (login OR paste-bytes) and `Configured`. Wired as a
-   second optional client on the importer/server.
+   Kept `internal/drm` as the package name (it IS the ebook DRM client; renaming
+   the package was churn with no behavior value). `EBOOK_SIDECAR_URL` keeps
+   `DRM_SIDECAR_URL` as a fallback so existing deploys don't break. Shipped +
+   verified (epub import unchanged) before adding audiobooks.
+2. (DONE) `audiobook-sidecar`: container (ffmpeg, stdlib Python), `/health`,
+   `/setup` (paste-bytes built; login a documented stub since audible-activator
+   uses the removed Selenium 3 API and the browser is intentionally not
+   installed), `/job` decrypt (ffmpeg `-activation_bytes -c copy`, `-progress`
+   parsed into a sibling `<out>.progress` file). Optional via empty
+   `AUDIOBOOK_SIDECAR_URL`; in dev+prod compose + the release image matrix.
+   Verified by building/running the container and exercising the full contract;
+   decrypt fails cleanly with wrong bytes on a real `.aax`. A SUCCESSFUL decrypt
+   still needs the user's real activation bytes.
+3. (DONE) `internal/audible.Client` (Go side): mirrors `drm.Client`
+   (`Health`/`Configured`/`Decrypt`) with audiobook-specific setup
+   (`SetupBytes` / `SetupLogin`) and a package-level `Progress(path)` that reads
+   the sidecar's progress file. 30-min timeout (a long decrypt). Tested against a
+   mock AND the real running sidecar (contract verified end to end). Wiring it as
+   a second optional client on the importer/server lands with the import step.
 4. `internal/audio`: `Read`/`CoverImage` via ffprobe/ffmpeg on a clean M4B; unit
    tests against a tiny synthetic chaptered M4B fixture (ffmpeg can generate one
    from silence + a chapters file, so no real audiobook is needed in the repo).
