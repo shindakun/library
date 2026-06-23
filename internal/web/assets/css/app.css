@@ -56,7 +56,8 @@ input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); bord
 .card a.open { text-decoration:none; color:inherit; display:block; }
 .cover { aspect-ratio:2/3; background:var(--cover-bg) center/cover no-repeat; display:block; }
 .card .t { display:block; padding:10px 12px 0; font-weight:600; font-size:14px; line-height:1.3; }
-.card .a { display:block; padding:3px 12px 10px; color:var(--muted); font-size:12px; line-height:1.35; }
+/* Extra right padding leaves room for the bottom-right (...) actions button. */
+.card .a { display:block; padding:3px 40px 12px 12px; color:var(--muted); font-size:12px; line-height:1.35; }
 .card .a a.author { color:var(--muted); text-decoration:none; }
 .card .a a.author:hover { color:var(--fg); text-decoration:underline; }
 
@@ -141,13 +142,15 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 .edit-actions .cancel:hover { text-decoration:underline; }
 .edit-status { font-size:13px; color:var(--muted); }
 .edit-status.error { color:#c0392b; }
-/* Per-card three-dot actions menu (Edit / Delete) on the grid */
-.book-menu { position:absolute; top:6px; right:6px; }
-.menu-btn { width:28px; height:28px; padding:0; border:none; border-radius:8px; background:color-mix(in srgb, var(--panel) 80%, transparent); color:var(--fg); cursor:pointer; font-size:18px; line-height:1; opacity:0; transition:opacity .12s; }
-.card:hover .menu-btn, .menu-btn[aria-expanded="true"] { opacity:1; }
-.menu-btn:hover { background:var(--cover-bg); }
-.menu-pop { position:absolute; top:32px; right:0; min-width:110px; background:var(--panel); border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.18); padding:4px; display:flex; flex-direction:column; z-index:5; }
-.menu-pop a, .menu-pop button { display:block; width:100%; text-align:left; padding:7px 10px; border:none; background:none; color:var(--fg); font-size:13px; border-radius:6px; cursor:pointer; text-decoration:none; font-family:inherit; }
+/* Per-card three-dot (...) actions menu (Edit / Delete), anchored bottom-right. */
+.book-menu { position:absolute; bottom:8px; right:8px; }
+.menu-btn { width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:20px; line-height:1; transition:background .12s, color .12s; }
+.menu-btn:hover, .menu-btn[aria-expanded="true"] { background:var(--cover-bg); color:var(--fg); }
+/* Popup opens UPWARD from the button (it sits at the card bottom). Closed by
+   default: [hidden] must win, so it only gets display:flex when shown. */
+.menu-pop { display:none; position:absolute; bottom:34px; right:0; min-width:120px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 6px 20px rgba(0,0,0,.22); padding:5px; flex-direction:column; z-index:10; }
+.menu-pop:not([hidden]) { display:flex; }
+.menu-pop a, .menu-pop button { display:block; width:100%; text-align:left; padding:8px 12px; border:none; background:none; color:var(--fg); font-size:13px; border-radius:6px; cursor:pointer; text-decoration:none; font-family:inherit; }
 .menu-pop a:hover, .menu-pop button:hover { background:var(--cover-bg); }
 .menu-pop .menu-delete { color:#c0392b; }
 
