@@ -12,6 +12,29 @@ This is a back-catalog tool for audiobooks the user already owns, exactly like
 the existing ADEPT path is for owned ebooks (see DESIGN.md). It is not a download
 or sharing mechanism.
 
+## 0. Decisions locked (read first)
+
+- **Sidecar naming (by content type):** the existing `drm-sidecar` is renamed
+  **`ebook-sidecar`**, and the new one is **`audiobook-sidecar`**. Both do DRM
+  removal, so "drm-sidecar" was ambiguous; content-type names read clearly in the
+  setup UI ("Ebook DRM" / "Audiobook DRM") and in compose/env. The env var
+  `DRM_SIDECAR_URL` becomes `EBOOK_SIDECAR_URL`; the new one is
+  `AUDIOBOOK_SIDECAR_URL`. (This rename is its own first build step; see §8.)
+- **Independent optionality (one / other / both / none):** each sidecar is
+  enabled by its own non-empty `*_SIDECAR_URL`, exactly like today's no-DRM mode.
+  The Go service holds two optional clients; any combination runs. With neither,
+  only comics + DRM-free epubs import.
+- **Startup setup, per sidecar:** the first-run page shows an **Ebook DRM** setup
+  section AND/OR an **Audiobook DRM** section, each appearing only if that sidecar
+  is present (enabled) but not yet configured. Generalizes today's single
+  AdobeID-only form. If a sidecar is disabled, its section never shows (mirrors
+  how the whole form is hidden in no-DRM mode).
+- **Audiobook setup offers BOTH paths:** Audible email/password (Selenium
+  retrieval of activation bytes) OR pasting the 8-hex-char activation bytes
+  directly. The paste path keeps the feature usable if Selenium breaks against an
+  Audible change; login is the no-prior-tooling path.
+- **v1 = `.aax`.** `.aaxc` (voucher-key) is a fast-follow (§4.3).
+
 ## 1. What an `.aax` is, and the one real wrinkle
 
 An `.aax` is a standard MP4/M4B container (`major_brand=aax`) holding an AAC
@@ -60,7 +83,7 @@ existing Adobe first-run setup:
   stored; only the resulting `activation_bytes` are kept (in `/secrets`, like the
   ADEPT key).
 - Selenium + a headless browser is a heavy, fragile dependency (a specific
-  Chromium/driver pairing). It must NOT be bolted onto the existing epub DRM
+  Chromium/driver pairing). It must NOT be bolted onto the existing ebook DRM
   sidecar, which is a carefully pinned acsm/DeDRM/oscrypto stack with no browser.
 
 There is also a **manual fallback**: a user who already knows their activation
@@ -74,13 +97,23 @@ Three options for where Audible decryption lives:
 
 | Option | Trade-off |
 | --- | --- |
-| Extend `drm-sidecar` | Pollutes the pinned epub stack with ffmpeg + Selenium + a browser; a Chromium update could break epub fulfillment. Rejected. |
-| **New `audible-sidecar` (RECOMMENDED)** | Independent container: ffmpeg + Selenium, its own `/secrets` slice, its own job contract. The epub sidecar is untouched. Clean blast radius, mirrors the existing "quarantine the messy part" pattern. |
+| Extend the ebook sidecar | Pollutes the pinned epub stack with ffmpeg + Selenium + a browser; a Chromium update could break epub fulfillment. Rejected. |
+| **New `audiobook-sidecar` (CHOSEN)** | Independent container: ffmpeg + Selenium, its own `/secrets` slice, its own job contract. The ebook sidecar is untouched. Clean blast radius, mirrors the existing "quarantine the messy part" pattern. |
 | Do it in the Go service | The Go service must never import Python or shell heavy/fragile tooling; ffmpeg-as-subprocess is plausible but Selenium is not, and keeping all DRM in sidecars is the established boundary. Rejected. |
 
-**Decision: a second sidecar, `audible-sidecar`.** It is the audiobook analog of
-`drm-sidecar`: optional (only present if the user wants audiobooks), quarantined,
-and the only component that touches the Audible activation bytes.
+**Decision: a second sidecar, `audiobook-sidecar`** (the existing one becomes
+`ebook-sidecar`, see §0). It is the audiobook analog of the ebook sidecar:
+optional (only present if the user wants audiobooks), quarantined, and the only
+component that touches the Audible activation bytes.
+
+**Go-side client reuse (gap found in the code):** `internal/drm.Client` is mostly
+generic, its HTTP transport (`do`, `health`, the `/job` `{op}` contract) is
+format-neutral, but `Setup(mail, password, adeVersion)` and `Configured` are
+Adobe-specific. So the audiobook side gets its own small client (e.g.
+`internal/audible.Client`) that reuses the same job/health shape but has a
+different `Setup` (login OR paste-bytes) and `Configured` semantic. Do NOT try to
+force one `drm.Client` to serve both; the setup payloads genuinely differ. The
+two clients are independent, nil-able fields on the importer/server.
 
 Its job contract mirrors the existing one (`POST /job`, `GET /health`,
 `POST /setup`):
@@ -96,9 +129,9 @@ The decrypt op is just an ffmpeg invocation:
 <out.m4b>`, reporting progress by parsing ffmpeg's `-progress` output (it emits
 `out_time_us` / total, a real percentage, exactly what the job bar wants).
 
-Like `drm-sidecar`, it is wired in compose, optional (an empty
-`AUDIBLE_SIDECAR_URL` disables audiobooks, same pattern as the no-DRM mode), and
-mounts the shared work dir.
+Like the ebook sidecar, it is wired in compose, optional (an empty
+`AUDIOBOOK_SIDECAR_URL` disables audiobooks, same pattern as the no-DRM mode),
+and mounts the shared work dir.
 
 ## 4. Import flow (what reuses, what is new)
 
@@ -217,28 +250,42 @@ to open there).
 
 ## 8. Build order
 
-1. `audible-sidecar`: new container (ffmpeg + Selenium), `/health`, `/setup`
+1. **Rename `drm-sidecar` -> `ebook-sidecar`** (its own self-contained step, no
+   behavior change): the compose service + dir, `DRM_SIDECAR_URL` ->
+   `EBOOK_SIDECAR_URL`, the Go field/var names where they read as generic "DRM"
+   (`s.DRM`, `drmClient` -> ebook-specific), and docs (DESIGN/DEPLOY/README).
+   Keep `internal/drm` as the package name (it IS ebook DRM) or rename to
+   `internal/ebookdrm`, decide during build; either way it stays the ebook
+   client. Ship + verify (epub import still works) before adding audiobooks.
+2. `audiobook-sidecar`: new container (ffmpeg + Selenium), `/health`, `/setup`
    (retrieve-via-login AND paste-bytes), `/job` decrypt (ffmpeg
    `-activation_bytes`, `-progress` parsing). Optional via empty
-   `AUDIBLE_SIDECAR_URL`. Verify decrypt against the 3 real `.aax` test files
+   `AUDIOBOOK_SIDECAR_URL`. Verify decrypt against the 3 real `.aax` test files
    once the user has extracted their bytes.
-2. `internal/audio`: `Read`/`CoverImage` via ffprobe/ffmpeg on a clean M4B; unit
+3. `internal/audible.Client` (Go side): reuse the job/health transport shape but
+   with an audiobook `Setup` (login OR paste-bytes) and `Configured`. Wired as a
+   second optional client on the importer/server.
+4. `internal/audio`: `Read`/`CoverImage` via ffprobe/ffmpeg on a clean M4B; unit
    tests against a tiny synthetic chaptered M4B fixture (ffmpeg can generate one
    from silence + a chapters file, so no real audiobook is needed in the repo).
-3. Schema/catalog: `format = "audio"`, `formatForPath`/`indexableExt`/
+5. Schema/catalog: `format = "audio"`, `formatForPath`/`indexableExt`/
    `readMetadata`/`coverImageFor` branches; `.m4b` in the library, `.aax` not.
-4. Import: `importable()` accepts `.aax`; `pipeline()` routes it to the audible
+6. Import: `importable()` accepts `.aax`; `pipeline()` routes it to the audiobook
    sidecar decrypt (an `onProgress("converting", ...)` step), then the shared
    tail. Verify end to end with a real `.aax`.
-5. Player: `audio.html` + `audio.js` + `/chapters`, format-dispatched at
+7. **Setup UI generalization (gap found in the code):** today `needsSetup` and the
+   index form are singular and AdobeID-only. Generalize: the first-run page shows
+   an independent **Ebook DRM** section (if the ebook sidecar is enabled +
+   unconfigured) AND/OR an **Audiobook DRM** section (if the audiobook sidecar is
+   enabled + unconfigured). Each form posts to its own setup endpoint; the
+   audiobook form has a mode toggle (login vs paste-bytes). A disabled sidecar's
+   section never renders. This is the "one / other / both / none" surface (§0).
+8. Player: `audio.html` + `audio.js` + `/chapters`, format-dispatched at
    `/read/{slug}`; range-served file for seeking; position persisted. (Browser-
    verified by the user; JS checked statically, per convention.)
-6. First-run setup UI: the web setup form gains an audiobook section (login or
-   paste bytes), gated on the audible sidecar being present. The setup form is
-   hidden entirely when the sidecar is disabled (mirrors the no-DRM mode).
-7. OPDS: emit the audio media type (decide on X4 inclusion).
-8. `.aaxc` fast-follow: voucher-key path in the sidecar; reject voucherless
-   `.aaxc` into `failed/`.
+9. OPDS: emit the audio media type (decide on X4 inclusion).
+10. `.aaxc` fast-follow: voucher-key path in the sidecar; reject voucherless
+    `.aaxc` into `failed/`.
 
 ## 9. Risks / notes
 
