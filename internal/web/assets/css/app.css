@@ -75,10 +75,16 @@
   --shadow:0 3px 12px rgba(0,0,0,.45); --radius:12px;
 }
 
+/* Border-box everywhere: padding + border count INSIDE a declared width, so a
+   width:100% control (inputs, table, popup buttons) never overflows its box by
+   the padding amount. This is the single fix for the "wider than its container"
+   bugs across the forms and menus. */
+*, *::before, *::after { box-sizing: border-box; }
+
 body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background:var(--bg); color:var(--fg); }
 
 /* --- Header (index) --- */
-header { padding: 16px 24px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; gap:16px; align-items:center; }
+header { padding: 16px 24px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:12px 16px; align-items:center; }
 /* Theme picker: a relative wrapper around the button so the dropdown anchors to
    it in both the header and the reader bar. */
 .theme-menu { position:relative; display:inline-flex; }
@@ -98,7 +104,7 @@ header .nav-import:hover { opacity:.9; }
    already takes the auto margin. */
 header > .theme-toggle:last-child,
 header > .theme-menu:last-child { margin-left:auto; }
-input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); border-radius:8px; width:260px; background:var(--bg); color:var(--fg); transition:border-color .12s, box-shadow .12s; }
+input[type=search]{ padding:7px 12px; border:1px solid var(--input-border); border-radius:8px; width:260px; max-width:100%; background:var(--bg); color:var(--fg); transition:border-color .12s, box-shadow .12s; }
 input[type=search]:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .nav-import:hover, .upload button:hover { filter:brightness(1.06); }
 .upload { display:flex; gap:8px; align-items:center; }
@@ -116,7 +122,7 @@ input[type=search]:focus{ outline:none; border-color:var(--accent); box-shadow:0
 .setup p { color:var(--muted); font-size:14px; }
 .setup form { display:flex; flex-direction:column; gap:12px; margin:16px 0 8px; }
 .setup label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
-.setup input, .setup select { padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; }
+.setup input, .setup select { width:100%; padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; }
 .setup button { padding:9px 14px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
 .setup .hint { font-size:12px; color:var(--faint); }
 
@@ -127,7 +133,7 @@ input[type=search]:focus{ outline:none; border-color:var(--accent); box-shadow:0
 .card > a.open { border-radius:var(--radius) var(--radius) 0 0; overflow:hidden; }
 .card a.open { text-decoration:none; color:inherit; display:block; }
 .cover { aspect-ratio:2/3; background:var(--cover-bg) center/cover no-repeat; display:block; }
-.card .t { display:block; padding:10px 12px 0; font-weight:600; font-size:14px; line-height:1.3; }
+.card .t { display:block; padding:10px 12px 0; font-weight:600; font-size:14px; line-height:1.3; overflow-wrap:anywhere; }
 /* Extra right padding leaves room for the bottom-right (...) actions button. */
 .card .a { display:block; padding:3px 40px 12px 12px; color:var(--muted); font-size:12px; line-height:1.35; }
 .card .a a.author { color:var(--muted); text-decoration:none; }
@@ -206,7 +212,7 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 .edit-wrap form { display:flex; flex-direction:column; gap:14px; }
 .edit-wrap label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--muted); }
 .edit-wrap label .muted { color:var(--faint); font-weight:400; }
-.edit-wrap input, .edit-wrap textarea { padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; font-family:inherit; }
+.edit-wrap input, .edit-wrap textarea { width:100%; padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; font-family:inherit; }
 .edit-wrap textarea { resize:vertical; }
 .edit-actions { display:flex; align-items:center; gap:14px; margin-top:4px; }
 .edit-actions button { padding:9px 16px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
@@ -230,7 +236,7 @@ body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:cal
 .cover-edit { margin-top:28px; padding-top:20px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:12px; align-items:flex-start; }
 .cover-preview { max-width:160px; border-radius:8px; border:1px solid var(--border); background:var(--cover-bg); }
 .cover-edit label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:var(--muted); }
-.cover-edit input[type=file] { font-size:13px; color:var(--fg); }
+.cover-edit input[type=file] { font-size:13px; color:var(--fg); max-width:100%; }
 
 /* Embed progress on the edit page (mirrors the import progress bar) */
 .embed-bar { width:100%; height:6px; margin-top:10px; appearance:none; -webkit-appearance:none; border:none; border-radius:999px; background:var(--cover-bg); overflow:hidden; }
