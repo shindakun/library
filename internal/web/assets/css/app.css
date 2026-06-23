@@ -94,7 +94,15 @@ header { padding: 16px 24px; background:var(--panel); border-bottom:1px solid va
 .theme-pop button:hover { background:var(--cover-bg); }
 .theme-pop button[aria-checked="true"] { font-weight:600; }
 .theme-pop button[aria-checked="true"]::after { content:"✓"; margin-left:auto; color:var(--accent); }
-header h1 { font-size:18px; margin:0; }
+/* The "Library" wordmark is the same size on every page: the index <h1>, the
+   sub-page back-links (Edit/Import), and the reader bar link all read at 17px. */
+header h1 { font-size:17px; margin:0; }
+/* Standardized sub-page header (Edit, Import): a "back to Library" link in the
+   reader-bar style, then a page title. The index header keeps its plain <h1>. */
+.back-link { display:inline-flex; align-items:center; gap:6px; color:var(--link); text-decoration:none; font-size:17px; }
+.back-link:hover { color:var(--accent); }
+.back-link::before { content:"\2190"; font-size:18px; line-height:1; }
+.page-title { font-size:17px; font-weight:600; margin:0; color:var(--muted); }
 header form.upload { margin-left:auto; }
 header .nav-import { margin-left:auto; padding:7px 12px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; text-decoration:none; font-size:14px; }
 header .nav-import:hover { opacity:.9; }
@@ -159,13 +167,12 @@ body:not([data-view="table"]) .table-wrap { display:none; }
 /* --- Reader --- */
 html.reader, body.reader { height:100%; margin:0; }
 #bar { height:44px; display:flex; align-items:center; gap:12px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--bar); }
-#bar a { color:var(--link); text-decoration:none; }
+#bar a { color:var(--link); text-decoration:none; font-size:17px; }
+#bar a:hover { color:var(--accent); }
 #viewer { height:calc(100% - 44px); background:var(--bg); }
 #bar button { border:1px solid var(--btn-border); background:var(--bar); color:var(--fg); border-radius:6px; padding:4px 10px; cursor:pointer; }
 
 /* Import page: header link + live job list with per-row progress. */
-.home { color:var(--fg); text-decoration:none; }
-.home:hover { text-decoration:underline; }
 .imports-wrap { padding:24px; max-width:760px; margin:0 auto; }
 .imports-wrap .hint { color:var(--muted); font-size:14px; margin:0 0 20px; }
 .imports-wrap .hint code { background:var(--cover-bg); padding:1px 5px; border-radius:4px; }
