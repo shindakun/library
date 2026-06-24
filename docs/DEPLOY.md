@@ -155,7 +155,9 @@ into `secrets/`. Re-run either method to re-authorize.
 - **Add a reader:** point any OPDS client (the X4, or another e-reader) at
   `http://<lan-ip>:8080/opds`.
 - **Browser library:** `http://<lan-ip>:8080/`.
-- **Import:** drop or upload `.acsm` / `.epub`; the watcher fulfills + decrypts.
+- **Import:** drop or upload `.acsm` / `.epub` / `.cbz` / `.cbr` / `.aax` (an
+  `.aaxc` is drop-in only, alongside its `.voucher`); the watcher fulfills,
+  decrypts, and indexes.
 - **Update:** `docker compose -f docker-compose.prod.yml pull && ... up -d`
   (or `make prod-deploy`). State in `data/` / `secrets/` survives.
 - **Logs:** `docker compose -f docker-compose.prod.yml logs -f`.

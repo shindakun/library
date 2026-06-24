@@ -68,7 +68,7 @@ docker/              container stack (compose + Dockerfiles)
 data/library/        clean EPUBs + CBZ comics (the library); sorted by author then title
 data/covers/         extracted cover-image cache, keyed by slug (derived, safe to wipe)
   covers/overrides/  user-uploaded cover overrides, keyed by slug (authoritative)
-data/import/         drop or upload .acsm / .epub / .cbz / .cbr here -> pipeline -> library
+data/import/         drop or upload .acsm/.epub/.cbz/.cbr/.aax (.aaxc+.voucher: drop only) -> pipeline -> library
   import/work/       sidecar + CBR-convert scratch (NOT watched)
   import/done/       originals archived here on success
   import/failed/     originals here on failure, with a .log sibling
@@ -165,7 +165,8 @@ rm`, so re-run it after recreating the machine).
 Three ways in; all converge on the same pipeline and catalog:
 
 - **Upload via the web UI**: the dedicated import page (`/imports`, linked from
-  the library header) accepts `.acsm`, `.epub`, `.cbz`, or `.cbr`, and shows
+  the library header) accepts `.acsm`, `.epub`, `.cbz`, `.cbr`, or `.aax`
+  (an `.aaxc` needs its `.voucher` sibling, so it is drop-in only), and shows
   live per-file progress over SSE. The file is staged atomically into
   `data/import/`.
 - **Drop a file** into `data/import/` directly.
@@ -239,8 +240,8 @@ Working and verified end-to-end via the compose stack:
   (verified on a real 743 MB / 366-page CBR: lossless, correctly ordered); comics
   catalog with covers, read in a built-in image-sequence viewer, and serve over
   OPDS with the comic media type.
-- **Web upload**: `.acsm`/`.epub`/`.cbz`/`.cbr` upload routes through the same
-  pipeline, with live per-file progress on the `/imports` page (SSE).
+- **Web upload**: `.acsm`/`.epub`/`.cbz`/`.cbr`/`.aax` upload routes through the
+  same pipeline, with live per-file progress on the `/imports` page (SSE).
 - **Browser UI**: grid + sortable table views (persisted), dark mode, clickable
   author search; covers cached to `data/covers` for fast grid loads. Each book
   has a three-dot menu with **Edit** and **Delete**.

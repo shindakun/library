@@ -164,6 +164,13 @@ function audLogin(ev) {
       const otpForm = document.getElementById("aud-otp-form");
       const msg = document.getElementById("aud-otp-msg");
       if (msg && res.j.message) msg.textContent = res.j.message;
+      // Switch fully into the OTP step: hide the email/password form, the
+      // paste-bytes form, and the paste/login tabs so only the OTP entry shows.
+      ev.target.style.display = "none";
+      const tabs = document.querySelector(".setup-tabs");
+      if (tabs) tabs.style.display = "none";
+      const bytesForm = document.getElementById("aud-bytes-form");
+      if (bytesForm) bytesForm.style.display = "none";
       if (otpForm) otpForm.style.display = "";
       audStatus("", false);
       const otpInput = otpForm && otpForm.querySelector('input[name="otp"]');
