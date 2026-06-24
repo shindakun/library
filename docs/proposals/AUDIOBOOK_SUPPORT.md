@@ -322,9 +322,26 @@ to open there).
    the sidecar's progress file. 30-min timeout (a long decrypt). Tested against a
    mock AND the real running sidecar (contract verified end to end). Wiring it as
    a second optional client on the importer/server lands with the import step.
-4. `internal/audio`: `Read`/`CoverImage` via ffprobe/ffmpeg on a clean M4B; unit
-   tests against a tiny synthetic chaptered M4B fixture (ffmpeg can generate one
-   from silence + a chapters file, so no real audiobook is needed in the repo).
+4. (DONE) `internal/audio`: `Read`/`CoverImage` for a clean M4B, parsing the
+   MP4/ISO-BMFF boxes in **pure Go** (NOT ffprobe/ffmpeg: the Go side never
+   shells out, ffmpeg lives only in the sidecar, so the distroless library image
+   needs no new runtime dep). Reads `moov/mvhd` (duration), `moov/udta/meta/ilst`
+   (iTunes tags: `©nam` title, `©ART` author, `aART` narrator, `©day` year,
+   `covr` cover), and chapters from **either** representation:
+   - **Nero `chpl`** box (a flat start-time + title list) is what ffmpeg's muxer
+     writes; preferred when present.
+   - **QuickTime chapter text track** (the audio trak's `tref/chap` points at a
+     `text` trak whose `stts` + text samples give chapter times + titles) is what
+     REAL Audible files carry: they have NO `chpl`. This was a gap caught by
+     testing the parser against a real `.aax`; the synthetic ffmpeg fixture has a
+     `chpl`, so it alone would not have exposed it. `Read` falls back to the text
+     track when `chpl` is absent. The `.aax`'s `moov` is unencrypted, so the
+     parser was validated directly against a real 27-chapter book (titles + start
+     times match) before the clean-`.m4b` decrypt path even exists.
+   Tests build a tiny chaptered M4B fixture in-process with ffmpeg (a TEST-only
+   dep, skipped if ffmpeg is absent) and also force the text-track path by
+   renaming the fixture's `chpl` box to `free`. Cover present/absent both
+   covered. All checks green (vet + full suite).
 5. Schema/catalog: `format = "audio"`, `formatForPath`/`indexableExt`/
    `readMetadata`/`coverImageFor` branches; `.m4b` in the library, `.aax` not.
 6. Import: `importable()` accepts `.aax`; `pipeline()` routes it to the audiobook
