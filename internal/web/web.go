@@ -114,6 +114,13 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "comic.html", map[string]any{"Book": b, "StartPage": page})
 		return
 	}
+	if b.Format == "audio" {
+		// The audio player is a later step; until then, do not load an audiobook
+		// into the epub reader (it would fail confusingly). The file is still
+		// downloadable via /file. TODO(audiobook step 8): render audio.html.
+		http.Error(w, "audiobook playback is not available yet; use download", http.StatusNotImplemented)
+		return
+	}
 	s.render(w, "reader.html", map[string]any{"Book": b})
 }
 
@@ -124,10 +131,14 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Content type + download filename match the format so e-readers and OPDS
-	// clients get the right media type (comics download as .cbz).
+	// clients get the right media type (comics download as .cbz, audiobooks as
+	// .m4b).
 	ctype, ext := "application/epub+zip", ".epub"
-	if b.Format == "cbz" {
+	switch b.Format {
+	case "cbz":
 		ctype, ext = "application/vnd.comicbook+zip", ".cbz"
+	case "audio":
+		ctype, ext = "audio/mp4", ".m4b"
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileutil.SafeFilename(b.Title)+ext))

@@ -367,6 +367,14 @@ func (c *Catalog) EmbedMetadata(ctx context.Context, slug string, onProgress fun
 		return EmbedResult{Reason: "library file missing"}, nil
 	}
 
+	// Audiobooks have no in-file metadata writer (internal/audio is read-only),
+	// so an edit is kept in the catalog only and never written back to the .m4b.
+	// Refuse here rather than fall through to the epub writer, which would
+	// corrupt the file.
+	if b.Format == "audio" {
+		return EmbedResult{Reason: "audiobook metadata is not embedded into the file"}, nil
+	}
+
 	ext := filepath.Ext(b.Path)
 	tmp := srcAbs + ".embed-tmp" + ext
 

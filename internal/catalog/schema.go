@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS books (
   added_at    INTEGER NOT NULL,
   source      TEXT,
   format      TEXT NOT NULL DEFAULT 'epub',
+  -- Audio-only, file-derived (never user-edited): the narrator and total
+  -- runtime in seconds. Empty/0 for non-audio formats.
+  narrator      TEXT,
+  duration_secs REAL,
   -- Metadata editing: which columns the user hand-edited (JSON array), when, and
   -- a stable public slug that survives file rewrites (set once at import).
   edited_fields TEXT NOT NULL DEFAULT '',

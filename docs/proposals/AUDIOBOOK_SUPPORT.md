@@ -342,8 +342,24 @@ to open there).
    dep, skipped if ffmpeg is absent) and also force the text-track path by
    renaming the fixture's `chpl` box to `free`. Cover present/absent both
    covered. All checks green (vet + full suite).
-5. Schema/catalog: `format = "audio"`, `formatForPath`/`indexableExt`/
-   `readMetadata`/`coverImageFor` branches; `.m4b` in the library, `.aax` not.
+5. (DONE) Schema/catalog: `format = "audio"`; `formatForPath`/`indexableExt`/
+   `readMetadata`/`coverImageFor` branch on `.m4b` (in the library) vs `.aax`
+   (not: decrypted at import). `readMetadata` maps `internal/audio`'s shared
+   fields onto the upsert struct and also returns an `audioMeta{Narrator,
+   Duration}` carried into two new, file-derived (never user-edited) columns
+   `narrator` + `duration_secs` (migrated like `format` was, populated on every
+   index, surfaced on `Book`). Gaps found in the code and closed in this step:
+   - **Metadata embed:** `EmbedMetadata` would have fallen through to the epub
+     writer for an audiobook and corrupted the `.m4b` (`internal/audio` is
+     read-only, no writer). Now refused cleanly with a reason; an audio edit
+     stays in the catalog only. Covered by a test.
+   - **Download MIME:** the `/file` handler hard-coded epub/cbz; `.m4b` now
+     downloads as `audio/mp4` with a `.m4b` name.
+   - **Reader dispatch:** the `/read/{slug}` handler would have loaded an
+     audiobook into the epub.js reader. It now returns 501 (player is step 8);
+     the file is still downloadable. A visible placeholder, not silent breakage.
+   Tested by indexing a real ffmpeg-built `.m4b` and asserting format=audio +
+   narrator + duration. vet/golangci-lint clean, full suite green.
 6. Import: `importable()` accepts `.aax`; `pipeline()` routes it to the audiobook
    sidecar decrypt (an `onProgress("converting", ...)` step), then the shared
    tail. Verify end to end with a real `.aax`.
