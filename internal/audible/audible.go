@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -163,7 +164,10 @@ func (c *Client) setup(ctx context.Context, payload map[string]any) error {
 		return fmt.Errorf("decode setup response: %w", err)
 	}
 	if !r.OK {
-		return fmt.Errorf("setup failed: %s", r.Error)
+		// Return the sidecar's message verbatim; the web/CLI caller adds the
+		// user-facing "audiobook setup failed: " context, so wrapping it here
+		// would double the prefix.
+		return errors.New(r.Error)
 	}
 	return nil
 }

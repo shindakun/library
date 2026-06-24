@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -142,7 +143,9 @@ func (c *Client) Setup(ctx context.Context, mail, password string, adeVersion in
 		return fmt.Errorf("decode setup response: %w", err)
 	}
 	if !r.OK {
-		return fmt.Errorf("setup failed: %s", r.Error)
+		// Return the sidecar's message verbatim; the web/CLI caller adds the
+		// user-facing "setup failed: " context, so wrapping here would double it.
+		return errors.New(r.Error)
 	}
 	return nil
 }
