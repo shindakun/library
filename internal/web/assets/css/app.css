@@ -231,6 +231,24 @@ body[data-fit="height"] .comic-viewer { align-items:center; }
 body[data-fit="height"] #comic-page { width:auto; max-width:100%; max-height:calc(100vh - var(--header-h)); height:auto; }
 .page-indicator { color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }
 
+/* --- Audiobook player --- */
+.audio-viewer { height:calc(100% - var(--header-h)); overflow:auto; background:var(--bg); }
+.audio-meta { display:flex; gap:18px; align-items:center; max-width:760px; margin:24px auto 0; padding:0 24px; }
+.audio-meta .cover { width:120px; flex:0 0 120px; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.2); }
+.audio-titles { min-width:0; }
+.audio-title { font-size:20px; font-weight:600; }
+.audio-by { color:var(--muted); margin-top:2px; }
+.audio-narrator { color:var(--faint); font-size:13px; margin-top:4px; }
+.audio-controls { display:flex; align-items:center; gap:10px; max-width:760px; margin:18px auto; padding:0 24px; }
+.audio-controls audio { flex:1; min-width:0; }
+.audio-controls button { border:1px solid var(--btn-border); background:var(--bar); color:var(--fg); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:13px; white-space:nowrap; }
+.chapters { list-style:none; margin:0 auto 32px; padding:0 12px; max-width:760px; }
+.chapter { display:flex; gap:12px; align-items:baseline; padding:9px 12px; border-radius:8px; cursor:pointer; }
+.chapter:hover { background:var(--panel); }
+.chapter.active { background:var(--panel); border:1px solid var(--accent); }
+.chapter-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chapter-at { color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }
+
 /* Metadata edit form */
 .edit-wrap { max-width:640px; margin:24px auto; padding:0 24px; }
 .edit-wrap form { display:flex; flex-direction:column; gap:14px; }

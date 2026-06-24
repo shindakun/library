@@ -400,9 +400,32 @@ to open there).
    removed afterwards). The login path remains the documented stub from step 2
    (the sidecar returns a clear "not available" error). vet/gofmt/golangci-lint
    clean, JS syntax-checked, full suite green.
-8. Player: `audio.html` + `audio.js` + `/chapters`, format-dispatched at
-   `/read/{slug}`; range-served file for seeking; position persisted. (Browser-
-   verified by the user; JS checked statically, per convention.)
+8. (DONE) Player. `/read/{slug}` now dispatches `format=audio` to a new
+   `audio.html` + `audio.js` (the 501 placeholder from step 5 is gone). It uses
+   the browser's native `<audio controls>` for transport and adds: a chapter
+   list fetched from `GET /book/{slug}/chapters` (click to seek, current chapter
+   highlighted in the bar), resume from the saved position, and +/-30s skip. The
+   file streams from a new inline `GET /book/{slug}/audio` (separate from the
+   attachment-serving `/file`) so the browser can range-seek; `http.ServeFile`
+   handles Range. Position persists through the SAME `/read` endpoint the other
+   readers use: elapsed seconds in `cfi`, `percent` = seconds/duration, saved
+   debounced on `timeupdate`/`pause` and via `sendBeacon` on page hide. Both new
+   endpoints are audio-only (404 otherwise).
+
+   **Verified (server side only):** Go tests cover `/chapters` (real chapters +
+   duration), `/audio` (206 + correct byte slice, inline not attachment),
+   non-audio 404s, and a real-template render asserting the player markup. The
+   same three checks pass against the LIVE container with a synthetic chaptered
+   `.m4b` (`/chapters` parsed, `/audio` returned `206` + `Content-Range`, player
+   page rendered; test file removed after). JS is syntax-checked.
+
+   **NOT verified (playback + player UI):** whether audio actually plays is
+   inherently the user's to confirm, no automated check (and no assistant) can
+   hear sound, and the synthetic test `.m4b` is silence besides. Also unconfirmed
+   in a real browser: clicking a chapter seeks, the current-chapter highlight
+   tracks playback, resume restores the saved position, the +/-30s buttons, and
+   `sendBeacon` saving on unload. These need a human with ears and a real
+   decrypted book; that pass is pending.
 9. OPDS: emit the audio media type (decide on X4 inclusion).
 10. `.aaxc` fast-follow: voucher-key path in the sidecar; reject voucherless
     `.aaxc` into `failed/`.

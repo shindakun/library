@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/steve/library/internal/audible"
+	"github.com/steve/library/internal/audio"
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/drm"
@@ -66,6 +67,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /book/{slug}/file", s.file)
 	mux.HandleFunc("GET /book/{slug}/cover", s.cover)
 	mux.HandleFunc("GET /book/{slug}/pages", s.comicPages)
+	mux.HandleFunc("GET /book/{slug}/chapters", s.audioChapters)
+	mux.HandleFunc("GET /book/{slug}/audio", s.audioStream)
 	mux.HandleFunc("GET /book/{slug}/page/{n}", s.comicPage)
 	mux.HandleFunc("GET /api/books", s.apiBooks)
 	mux.HandleFunc("PUT /api/books/{slug}/read", s.apiSaveRead)
@@ -120,10 +123,15 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Format == "audio" {
-		// The audio player is a later step; until then, do not load an audiobook
-		// into the epub reader (it would fail confusingly). The file is still
-		// downloadable via /file. TODO(audiobook step 8): render audio.html.
-		http.Error(w, "audiobook playback is not available yet; use download", http.StatusNotImplemented)
+		// Restore the saved position (cfi holds the elapsed seconds for audio,
+		// mirroring how comics store the page number there).
+		start := 0.0
+		if _, cfi := s.Cat.ReadState(r.Context(), b.ID); cfi != "" {
+			if secs, perr := strconv.ParseFloat(cfi, 64); perr == nil && secs >= 0 {
+				start = secs
+			}
+		}
+		s.render(w, "audio.html", map[string]any{"Book": b, "StartSeconds": start})
 		return
 	}
 	s.render(w, "reader.html", map[string]any{"Book": b})
@@ -196,6 +204,59 @@ func (s *Server) comicPages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int{"count": len(pages)})
+}
+
+// audioChapters returns an audiobook's chapter list as JSON
+// [{"title","start"}], read live from the .m4b. The player fetches it once to
+// build its clickable chapter list. Audio-only (404 for other formats).
+func (s *Server) audioChapters(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	if b.Format != "audio" {
+		http.Error(w, "not an audiobook", http.StatusNotFound)
+		return
+	}
+	m, err := audio.Read(s.Cat.AbsPath(b))
+	if err != nil {
+		http.Error(w, "cannot read audiobook", http.StatusInternalServerError)
+		return
+	}
+	// Always emit a (possibly empty) array, plus the duration so the player can
+	// compute percentages without a second read.
+	type chapter struct {
+		Title string  `json:"title"`
+		Start float64 `json:"start"`
+	}
+	out := struct {
+		Duration float64   `json:"duration"`
+		Chapters []chapter `json:"chapters"`
+	}{Duration: m.Duration, Chapters: []chapter{}}
+	for _, c := range m.Chapters {
+		out.Chapters = append(out.Chapters, chapter{Title: c.Title, Start: c.Start})
+	}
+	writeJSON(w, out)
+}
+
+// audioStream serves the audiobook file INLINE (not as an attachment) so the
+// browser's <audio> element streams and seeks it. http.ServeFile handles HTTP
+// range requests, which is exactly what seeking needs. Audio-only (404 else).
+func (s *Server) audioStream(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	if b.Format != "audio" {
+		http.Error(w, "not an audiobook", http.StatusNotFound)
+		return
+	}
+	// Inline (no Content-Disposition: attachment) so it plays in-page; ServeFile
+	// sets Content-Type from the extension and honors Range for seeking.
+	w.Header().Set("Content-Type", "audio/mp4")
+	http.ServeFile(w, r, s.Cat.AbsPath(b))
 }
 
 // comicPage serves the nth page image (0-based) of a comic, straight from the
