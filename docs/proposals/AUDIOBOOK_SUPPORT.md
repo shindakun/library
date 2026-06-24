@@ -360,9 +360,26 @@ to open there).
      the file is still downloadable. A visible placeholder, not silent breakage.
    Tested by indexing a real ffmpeg-built `.m4b` and asserting format=audio +
    narrator + duration. vet/golangci-lint clean, full suite green.
-6. Import: `importable()` accepts `.aax`; `pipeline()` routes it to the audiobook
-   sidecar decrypt (an `onProgress("converting", ...)` step), then the shared
-   tail. Verify end to end with a real `.aax`.
+6. (DONE) Import: `importable()` + `sourceFor()` accept `.aax` (source
+   `audible-import`). `pipeline()` routes `.aax` to a new `decryptAudible()`
+   that, like the comic branch, skips the epub inspection and drives the
+   audiobook sidecar. The sidecar's `/job` decrypt is synchronous, so
+   `decryptAudible` polls the sibling `<out>.m4b.progress` file (via
+   `audible.Progress`) in a goroutine and reports `onProgress("converting",
+   frac, "NN%")` so the /imports bar fills during a multi-minute conversion;
+   the clean `.m4b` then flows through the shared tail (verify -> Author/Title
+   rename keeping `.m4b` -> index as `format=audio` -> archive the original
+   `.aax` to done/). `verify()` parses the `.m4b` via `internal/audio`. The
+   `audible.Client` is wired on the `Importer` (`Audible` field) and built in
+   `main.go` from `AUDIOBOOK_SIDECAR_URL` / `-audiobook-sidecar`, independent of
+   the ebook sidecar (the "one / other / both / none" surface): empty disables
+   it and `.aax` is rejected into `failed/` with a clear reason. A startup
+   health probe logs ready / needs-setup / down. Tested end to end with a mock
+   sidecar that produces a real ffmpeg `.m4b` (asserts library path, format,
+   narrator, archived original) and a disabled-sidecar reject test; the `.aax`
+   unit cases are in `TestImportable`/`TestSourceFor`. A real `.aax` decrypt
+   still needs the user's activation bytes (not yet extracted), the one path
+   not exercisable here. vet/gofmt/golangci-lint clean, full suite green.
 7. **Setup UI generalization (gap found in the code):** today `needsSetup` and the
    index form are singular and AdobeID-only. Generalize: the first-run page shows
    an independent **Ebook DRM** section (if the ebook sidecar is enabled +
