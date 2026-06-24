@@ -441,8 +441,26 @@ to open there).
    links it, and the type mapping for all four formats. Verified against the live
    stack (nav link present, `/opds/audiobooks` 200, `/opds/all` unchanged at the
    real 9 books). vet/gofmt/golangci-lint clean, full suite green.
-10. `.aaxc` fast-follow: voucher-key path in the sidecar; reject voucherless
-    `.aaxc` into `failed/`.
+10. (DONE) `.aaxc` fast-follow. The sidecar's `decrypt()` now branches on
+    extension: `.aax` uses `-activation_bytes` (account secret) as before;
+    `.aaxc` reads a PER-FILE key + IV from a sibling `<name>.voucher` JSON and
+    uses `ffmpeg -audible_key <k> -audible_iv <iv>` (no account secret, so an
+    `.aaxc` decrypts even when activation bytes are unset). The voucher parser
+    reads the canonical audible-cli layout
+    (`content_license.license_response.{key,iv}`) with a flat `{key,iv}` fallback,
+    and raises a clear error for a missing voucher or one with no key/iv, so a
+    voucherless `.aaxc` fails cleanly into `import/failed/`. On the Go side
+    `importable`/`isAudible`/`sourceFor` accept `.aaxc`, and the dropped `.aaxc`
+    plus its `.voucher` are archived together to `done/` (or `failed/`), the
+    voucher is never orphaned in the import root. `.aaxc` is drop-in only (like
+    `.aax`), not browser-uploadable: it is large and arrives as a file pair.
+    Verified: the voucher parser against the real canonical/flat/missing/no-key
+    shapes; the Go pipeline end to end through a mock sidecar (library landing +
+    voucher moved to `done/`); `.aaxc` classification. ffmpeg confirmed to expose
+    `-audible_key`/`-audible_iv`. The ffmpeg `.aaxc` decrypt itself is unrun (the
+    user has only `.aax` test files, no `.aaxc`/voucher), the one path not
+    exercisable here. vet/gofmt/golangci-lint clean, Python compiles, full suite
+    green.
 
 ## 9. Risks / notes
 

@@ -26,10 +26,13 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
   `/secrets` for the Adobe activation + key, and writes it only during first-run
   setup.
 - **`audiobook-sidecar`** (optional): quarantined ffmpeg worker that removes
-  Audible DRM from a `.aax` (decode with the account activation bytes, copy the
-  audio + chapters to a clean `.m4b`). Holds the activation bytes in `/secrets`.
-  Setup stores pasted activation bytes (`make audiobook-setup BYTES=...`, or the
-  web form). The Go-side import wiring + player are still being built; see
+  Audible DRM, copying the audio + chapters losslessly to a clean `.m4b`. A
+  `.aax` is decoded with the account activation bytes (held in `/secrets`); the
+  newer `.aaxc` is decoded with a per-file key/IV read from a sibling
+  `<name>.voucher` JSON dropped beside it (no account secret needed). Setup
+  stores pasted activation bytes (`make audiobook-setup BYTES=...`, or the web
+  form). Imported audiobooks get a browser player (chapters, resume, +/-30s) and
+  their own OPDS feed; see
   [docs/proposals/AUDIOBOOK_SUPPORT.md](docs/proposals/AUDIOBOOK_SUPPORT.md).
 
 Each sidecar is **only** needed for its DRM'd content and is independently

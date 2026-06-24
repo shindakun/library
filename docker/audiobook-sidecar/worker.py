@@ -2,12 +2,19 @@
 """Audiobook DRM sidecar worker.
 
 A tiny always-on HTTP worker the Go service drives, the audiobook analog of the
-ebook sidecar. It removes Audible DRM from a .aax (and later .aaxc) by decoding
-the AAX-encrypted audio with ffmpeg and the account's activation bytes, producing
-a clean, DRM-free, chaptered .m4b. It is the ONLY component that touches the
-Audible activation bytes (kept in /secrets).
+ebook sidecar. It removes Audible DRM with ffmpeg, producing a clean, DRM-free,
+chaptered .m4b, from either format:
+
+  .aax   -> decoded with the account ACTIVATION BYTES (one secret for the whole
+            account, stored in /secrets at setup).
+  .aaxc  -> decoded with a PER-FILE key + IV read from a sibling "<name>.voucher"
+            JSON that Audible ships beside the file; no account secret needed.
+
+It is the ONLY component that touches the Audible activation bytes (kept in
+/secrets).
 
   POST /job {"op":"decrypt","input":"/work/x.aax"}  -> clean .m4b in the work dir
+  POST /job {"op":"decrypt","input":"/work/x.aaxc"} -> needs x.voucher beside it
   GET  /health                                       -> 200 if activation bytes present
   POST /setup {"bytes":"1A2B3C4D"}                   -> store pasted activation bytes
   POST /setup {"mail":...,"password":...}            -> retrieve via Audible login (Selenium)
@@ -95,14 +102,32 @@ def _write_progress(progress_path, frac, detail):
 
 
 def decrypt(input_path):
-    """Decrypt a .aax to a clean .m4b in the work dir. Returns (output, log).
+    """Decrypt a .aax or .aaxc to a clean .m4b in the work dir.
 
-    Lossless: copies the AAC audio + chapters, no re-encode. Streams ffmpeg
-    -progress to a sibling .progress file so a long convert can drive a bar.
+    Returns (output, log). Branches on the input format because the two carry
+    DRM differently:
+
+      .aax   -> AES key derived from the account ACTIVATION BYTES (one secret
+                for the whole account, stored in /secrets at setup):
+                ffmpeg -activation_bytes <hex>
+      .aaxc  -> a PER-FILE AES key + IV that Audible ships in a sibling
+                "<name>.voucher" JSON; no account secret is involved:
+                ffmpeg -audible_key <hex> -audible_iv <hex>
+
+    Either way decryption is lossless: the AAC audio + embedded chapters are
+    copied through (-c copy), no re-encode.
     """
-    abytes = _activation_bytes()
-    if not abytes:
-        raise RuntimeError("not configured: no Audible activation bytes (run setup)")
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext == ".aaxc":
+        key, iv = _voucher_key_iv(input_path)
+        key_args = ["-audible_key", key, "-audible_iv", iv]
+        wrong = "wrong voucher key/iv?"
+    else:  # .aax (the default)
+        abytes = _activation_bytes()
+        if not abytes:
+            raise RuntimeError("not configured: no Audible activation bytes (run setup)")
+        key_args = ["-activation_bytes", abytes]
+        wrong = "wrong activation bytes?"
 
     base = os.path.splitext(os.path.basename(input_path))[0]
     output = os.path.join(WORK, base + ".m4b")
@@ -111,7 +136,7 @@ def decrypt(input_path):
 
     cmd = [
         "ffmpeg", "-nostdin", "-hide_banner", "-y",
-        "-activation_bytes", abytes,
+        *key_args,
         "-i", input_path,
         "-c", "copy", "-movflags", "+faststart",
         "-progress", "pipe:1", "-loglevel", "error",
@@ -136,16 +161,56 @@ def decrypt(input_path):
             proc.kill()
 
     if proc.returncode != 0:
-        # A wrong activation-bytes value makes ffmpeg fail here; surface it.
+        # A wrong key makes ffmpeg fail here; surface it.
         _safe_remove(output)
         _safe_remove(progress_path)
-        raise RuntimeError("ffmpeg decrypt failed (wrong activation bytes?): " + (err or "")[-500:])
+        raise RuntimeError("ffmpeg decrypt failed (%s): %s" % (wrong, (err or "")[-500:]))
     if not os.path.exists(output) or os.path.getsize(output) == 0:
         _safe_remove(progress_path)
         raise RuntimeError("ffmpeg produced no output")
 
     _write_progress(progress_path, 1.0, "done")
     return output, (err or "")
+
+
+def _voucher_key_iv(aaxc_path):
+    """Read the per-file AES key + IV for an .aaxc from its sibling .voucher.
+
+    Audible ships "<name>.voucher" beside the .aaxc: a JSON license response
+    whose decrypted voucher holds the hex key/iv. The canonical layout (as
+    written by audible-cli) nests them at
+    content_license.license_response.{key,iv}; we also accept a flat
+    {"key","iv"} for vouchers some tools store pre-extracted. Raises a clear
+    error (no voucher / no key) so a voucherless .aaxc fails cleanly into
+    import/failed/.
+    """
+    voucher_path = os.path.splitext(aaxc_path)[0] + ".voucher"
+    if not os.path.exists(voucher_path):
+        raise RuntimeError(
+            "no voucher for this .aaxc: expected %s beside it. The .aaxc needs the "
+            "per-file key/IV that Audible ships in the voucher; download both."
+            % os.path.basename(voucher_path)
+        )
+    try:
+        with open(voucher_path, "r") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise RuntimeError("could not read voucher %s: %s" % (os.path.basename(voucher_path), e))
+
+    # Canonical: content_license.license_response.{key,iv}
+    lr = data.get("content_license", {}).get("license_response", {})
+    key = lr.get("key") if isinstance(lr, dict) else None
+    iv = lr.get("iv") if isinstance(lr, dict) else None
+    # Fallback: a flat voucher dict.
+    if not (key and iv):
+        key = key or data.get("key")
+        iv = iv or data.get("iv")
+    if not (key and iv):
+        raise RuntimeError(
+            "voucher %s has no usable key/iv (expected content_license."
+            "license_response.{key,iv})" % os.path.basename(voucher_path)
+        )
+    return key, iv
 
 
 def _safe_remove(path):

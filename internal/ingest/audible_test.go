@@ -187,3 +187,67 @@ func TestImportAudiobookWithoutSidecar(t *testing.T) {
 		t.Errorf("catalog has %d books, want 0 (import should have failed)", len(books))
 	}
 }
+
+// TestImportAaxcMovesVoucher drops an .aaxc plus its sibling .voucher, imports it
+// through the mock sidecar, and asserts both the .aaxc AND the voucher are
+// archived to done/ (the voucher must not be orphaned in the import root).
+func TestImportAaxcMovesVoucher(t *testing.T) {
+	dir := t.TempDir()
+	importDir := filepath.Join(dir, "import")
+	libraryDir := filepath.Join(dir, "library")
+	for _, d := range []string{importDir, libraryDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat, err := catalog.Open(filepath.Join(dir, "catalog.db"), libraryDir, filepath.Join(dir, "covers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cat.Close() })
+
+	src := filepath.Join(importDir, "dropped.aaxc")
+	if err := os.WriteFile(src, []byte("aaxc bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	voucher := filepath.Join(importDir, "dropped.voucher")
+	if err := os.WriteFile(voucher, []byte(`{"content_license":{"license_response":{"key":"k","iv":"v"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	im := &Importer{
+		Cat:         cat,
+		ImportDir:   importDir,
+		LibraryDir:  libraryDir,
+		SidecarPath: func(p string) string { return p },
+	}
+	im.Audible = mockAudibleSidecar(t, im.workDir())
+	im.handle(context.Background(), src)
+
+	// The audiobook landed in the library.
+	if _, err := os.Stat(filepath.Join(libraryDir, "Imported Author", "Imported Audiobook.m4b")); err != nil {
+		t.Fatalf("audiobook not in library: %v", err)
+	}
+	// Both the .aaxc and its voucher are archived to done/, neither left behind.
+	if _, err := os.Stat(filepath.Join(importDir, "done", "dropped.aaxc")); err != nil {
+		t.Errorf(".aaxc not archived to done/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(importDir, "done", "dropped.voucher")); err != nil {
+		t.Errorf("voucher not moved to done/ (orphaned in import root?): %v", err)
+	}
+	if _, err := os.Stat(voucher); !os.IsNotExist(err) {
+		t.Errorf("voucher still in import root (should have moved): err=%v", err)
+	}
+}
+
+func TestAaxcIsImportableAndAudible(t *testing.T) {
+	if !importable("book.aaxc") || !importable("BOOK.AAXC") {
+		t.Error("importable should accept .aaxc")
+	}
+	if !isAudible("book.aaxc") {
+		t.Error("isAudible should be true for .aaxc")
+	}
+	if sourceFor("book.aaxc") != "audible-import" {
+		t.Errorf("sourceFor(.aaxc) = %q, want audible-import", sourceFor("book.aaxc"))
+	}
+}
