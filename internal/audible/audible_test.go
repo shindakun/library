@@ -116,11 +116,11 @@ func TestSetupLoginSendsCreds(t *testing.T) {
 	c := mockSidecar(t, "", nil, func(req map[string]any, w http.ResponseWriter) {
 		gotMail, _ = req["mail"].(string)
 		gotMarket, _ = req["marketplace"].(string)
-		// Login can still fail (e.g. CAPTCHA/2FA); the client must propagate it.
+		// Login can still fail (e.g. CAPTCHA); the client must propagate it.
 		w.WriteHeader(500)
-		_, _ = w.Write([]byte(`{"ok":false,"error":"Audible asked for a CAPTCHA or 2FA/OTP code"}`))
+		_, _ = w.Write([]byte(`{"ok":false,"error":"Audible asked for a CAPTCHA"}`))
 	})
-	err := c.SetupLogin(context.Background(), "a@b.c", "pw", "uk")
+	_, err := c.SetupLogin(context.Background(), "a@b.c", "pw", "uk")
 	if err == nil || !contains(err.Error(), "CAPTCHA") {
 		t.Errorf("login error = %v, want it to propagate the sidecar message", err)
 	}
@@ -129,6 +129,38 @@ func TestSetupLoginSendsCreds(t *testing.T) {
 	}
 	if gotMarket != "uk" {
 		t.Errorf("sidecar received marketplace %q, want uk", gotMarket)
+	}
+}
+
+func TestSetupLoginReturnsOTPRequired(t *testing.T) {
+	c := mockSidecar(t, "", nil, func(req map[string]any, w http.ResponseWriter) {
+		_, _ = w.Write([]byte(`{"ok":true,"otp_required":true,"login_id":"abc123","message":"Enter the code"}`))
+	})
+	res, err := c.SetupLogin(context.Background(), "a@b.c", "pw", "us")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OTPRequired || res.LoginID != "abc123" {
+		t.Errorf("got %+v, want OTPRequired with login_id abc123", res)
+	}
+}
+
+func TestSetupLoginOTPCompletes(t *testing.T) {
+	var gotID, gotOTP string
+	c := mockSidecar(t, "", nil, func(req map[string]any, w http.ResponseWriter) {
+		gotID, _ = req["login_id"].(string)
+		gotOTP, _ = req["otp"].(string)
+		_, _ = w.Write([]byte(`{"ok":true,"activation":true}`))
+	})
+	res, err := c.SetupLoginOTP(context.Background(), "abc123", "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OTPRequired {
+		t.Error("completed login should not still require OTP")
+	}
+	if gotID != "abc123" || gotOTP != "123456" {
+		t.Errorf("sidecar got login_id=%q otp=%q, want abc123/123456", gotID, gotOTP)
 	}
 }
 

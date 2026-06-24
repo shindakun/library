@@ -66,7 +66,7 @@
         placeholder="8 hex chars (e.g. 1a2b3c4d)" autocomplete="off"></label>
       <button type="submit">Save bytes</button>
     </form>
-    <form method="post" action="/api/setup/audiobook" id="aud-login-form" style="display:none">
+    <form action="/api/setup/audiobook" id="aud-login-form" style="display:none" onsubmit="return audLogin(event)">
       <input type="hidden" name="mode" value="login">
       <label>Audible email<input type="email" name="mail" autocomplete="username"></label>
       <label>Password<input type="password" name="password" autocomplete="current-password"></label>
@@ -85,10 +85,19 @@
       </label>
       <button type="submit">Retrieve &amp; save</button>
     </form>
+    <form id="aud-otp-form" style="display:none" onsubmit="return audOtp(event)">
+      <p class="hint" id="aud-otp-msg">Audible sent a 2FA code. Enter it to finish.</p>
+      <label>2FA / OTP code<input type="text" name="otp" inputmode="numeric" autocomplete="one-time-code"></label>
+      <button type="submit">Submit code</button>
+    </form>
+    <p class="hint" id="aud-login-status" style="display:none"></p>
     <p class="hint">Bytes are an account secret, sent over your LAN to the local
-    sidecar and stored only there. Pasting is the reliable path; login retrieval
-    may be unavailable in this build (it then reports a clear error). See
-    docs/DEPLOY.md.</p>
+    sidecar and stored only there. <strong>Pasting is the reliable path.</strong>
+    Login is best-effort, no promises: if Audible asks for a 2FA / OTP code we
+    can prompt for it (it might work), but a <strong>CAPTCHA can never be solved
+    here</strong>, that login will always fail. If login won't go through, get
+    your bytes with a tool like the <code>audible</code> Python CLI and paste
+    them. See docs/DEPLOY.md.</p>
   </div>
   {{end}}
 </div>

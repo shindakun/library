@@ -482,6 +482,29 @@ to open there).
     error). A real SUCCESSFUL login needs the user's actual Amazon credentials,
     not exercised here. DEPLOY/README updated to mark login working. vet/gofmt/
     golangci-lint clean, Python compiles, full suite green.
+12. (DONE) **Two-step OTP login (the step-11 "refuse OTP" call was wrong).** Step
+    11 refused 2FA codes; but the user has 2FA, received the code, and had
+    nowhere to enter it. The fix: a genuine two-step flow. `audible`'s
+    `from_login` is one blocking call that invokes `otp_callback` when MFA is
+    hit, and the one-time code does not exist until the password step triggers
+    it, so it can't be collected up front. The sidecar now runs the login on a
+    background thread whose `otp_callback` blocks on a queue; step-1 POST
+    `{mail,password}` returns `{otp_required, login_id}` once the thread reaches
+    the prompt, and step-2 POST `{login_id, otp}` pushes the code into that
+    session's queue to finish. Parked logins expire (TTL) so abandoned attempts
+    can't leak threads. The Go client gained `SetupLogin -> LoginResult{OTPRequired,
+    LoginID}` + `SetupLoginOTP`; the web handler returns JSON the new `audLogin`/
+    `audOtp` JS drives (reveals an OTP sub-form, submits the code, reloads on
+    success). **CAPTCHA still always refuses** (an image can't be solved here);
+    the form says so plainly, frames login as best-effort with no promises, and
+    points to the `audible` Python CLI + paste as the dependable route. Verified:
+    the two-step threading/queue bridge end to end against the real worker (a
+    simulated MFA prompt parked, then completed on OTP delivery, bytes stored);
+    error paths (unknown/expired login_id, empty OTP); the real sidecar image
+    still invokes the callback on a real Amazon MFA challenge. A real successful
+    2FA login needs the user's credentials + live code, not exercised here.
+    vet/gofmt/golangci-lint clean, Python compiles, JS syntax-checked, full suite
+    green.
 
 ## 9. Risks / notes
 

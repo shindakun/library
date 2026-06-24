@@ -437,7 +437,6 @@ func (s *Server) apiSetupAudiobook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "audiobook sidecar not configured", http.StatusServiceUnavailable)
 		return
 	}
-	var err error
 	switch r.FormValue("mode") {
 	case "login":
 		mail := r.FormValue("mail")
@@ -447,24 +446,43 @@ func (s *Server) apiSetupAudiobook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// marketplace is the account region (us/uk/de/...); empty defaults to us.
-		err = s.Audible.SetupLogin(r.Context(), mail, password, r.FormValue("marketplace"))
+		res, err := s.Audible.SetupLogin(r.Context(), mail, password, r.FormValue("marketplace"))
+		s.writeLoginResult(w, res, err)
+	case "otp":
+		// Step 2: deliver the 2FA code to the parked login.
+		res, err := s.Audible.SetupLoginOTP(r.Context(), r.FormValue("login_id"), r.FormValue("otp"))
+		s.writeLoginResult(w, res, err)
 	default: // "bytes" (paste) is the default and reliable path
 		bytesHex := strings.TrimSpace(r.FormValue("bytes"))
 		if bytesHex == "" {
 			http.Error(w, "activation bytes are required", http.StatusBadRequest)
 			return
 		}
-		err = s.Audible.SetupBytes(r.Context(), bytesHex)
+		if err := s.Audible.SetupBytes(r.Context(), bytesHex); err != nil {
+			http.Error(w, "audiobook setup failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "application/json") {
+			writeJSON(w, map[string]bool{"configured": true})
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
+}
+
+// writeLoginResult renders a login step's outcome as JSON for the setup JS: an
+// error, an OTP prompt (otp_required + login_id), or success (configured).
+func (s *Server) writeLoginResult(w http.ResponseWriter, res audible.LoginResult, err error) {
 	if err != nil {
-		http.Error(w, "audiobook setup failed: "+err.Error(), http.StatusBadGateway)
+		w.WriteHeader(http.StatusBadGateway)
+		writeJSON(w, map[string]any{"error": "audiobook setup failed: " + err.Error()})
 		return
 	}
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, map[string]bool{"configured": true})
+	if res.OTPRequired {
+		writeJSON(w, map[string]any{"otp_required": true, "login_id": res.LoginID, "message": res.Message})
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	writeJSON(w, map[string]bool{"configured": true})
 }
 
 // setupState tells the index template which first-run setup sections to show.

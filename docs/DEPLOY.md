@@ -117,16 +117,25 @@ only to register; they are not stored (only the resulting activation files and
 ### Audiobook setup (Audible activation bytes)
 
 If the audiobook sidecar is enabled, the same banner shows an **Audiobook DRM
-(Audible)** card with two modes. **Paste bytes** (the reliable path): paste your
-account's 8 hex activation-byte characters and save. **Audible login**: enter
-your Amazon email/password and pick your marketplace (US/UK/DE/...); the sidecar
-logs in to Audible (via the `audible` library, no browser) and fetches the bytes
-for you. If Amazon demands a CAPTCHA or a 2FA/OTP code, the automatic login can't
-complete it and reports a clear error, use paste bytes then. Either way the bytes
-are written to `secrets/audible_activation_bytes` and the card disappears. You
-can also set them from a shell with `make audiobook-setup BYTES=<8 hex chars>`.
-The bytes (and, for login, your credentials) are an account secret, sent over
-your LAN to the local sidecar; only the resulting bytes are stored.
+(Audible)** card with two modes.
+
+**Paste bytes (the reliable path):** paste your account's 8 hex activation-byte
+characters and save. You can also set them from a shell with
+`make audiobook-setup BYTES=<8 hex chars>`.
+
+**Audible login (best-effort, no promises):** enter your Amazon email/password
+and pick your marketplace (US/UK/DE/...); the sidecar logs in to Audible (via the
+`audible` library, no browser) and fetches the bytes for you. If the account has
+2FA, the form then prompts for the one-time code (the code doesn't exist until
+the password step triggers it, so it's a two-step flow). This *might* work. What
+will NOT work: if Amazon presents a **CAPTCHA** (an image challenge), the login
+can't complete here and always fails. When login won't go through, get your bytes
+out-of-band with a tool like the [`audible`](https://github.com/mkb79/audible-cli)
+Python CLI and paste them.
+
+Either path writes the bytes to `secrets/audible_activation_bytes` and the card
+disappears. The bytes (and, for login, your credentials) are an account secret,
+sent over your LAN to the local sidecar; only the resulting bytes are stored.
 
 ### CLI (the proven fallback)
 

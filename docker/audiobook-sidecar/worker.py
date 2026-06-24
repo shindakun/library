@@ -30,10 +30,14 @@ and reused for every book on that account. They are 8 hex chars (4 bytes).
 
 import json
 import os
+import queue
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -228,67 +232,150 @@ def setup_paste(activation_bytes):
     return {"activation": True, "source": "paste", "bytes_len": len(stored)}
 
 
+# --- Audible login (two-step: password, then OTP) ----------------------------
+#
+# The `audible` library's from_login() is one blocking call: when Amazon demands
+# a 2FA one-time code it invokes otp_callback() and waits, then submits the code
+# on the same session. A one-time code does NOT exist until the password step
+# triggers it, so the UI can't collect it up front. We therefore run the login
+# on a BACKGROUND THREAD and bridge the callback across two HTTP requests:
+#
+#   1. POST /setup {mail,password,marketplace}  -> starts the thread. If the
+#      login reaches the OTP prompt, otp_callback blocks on a queue and we return
+#      {otp_required: true, login_id}. The thread + session stay parked.
+#   2. POST /setup {login_id, otp}              -> pushes the code into that
+#      session's queue; the blocked callback returns it, the thread finishes the
+#      login, fetches the activation bytes, and stores them.
+#
+# CAPTCHA still refuses (an image can't be solved in this flow); the user falls
+# back to paste. Parked logins expire so an abandoned attempt can't leak a thread.
+
+_PENDING = {}            # login_id -> _PendingLogin
+_PENDING_LOCK = threading.Lock()
+_PENDING_TTL = 300       # seconds a parked (waiting-for-OTP) login lives
+_OTP_WAIT = 240          # seconds otp_callback blocks for the code before giving up
+
+
+class _ChallengeRequired(Exception):
+    """Internal: raised by the captcha/cvf callbacks to abort a login that needs
+    interactive verification this flow can't satisfy (e.g. a CAPTCHA image)."""
+
+
+class _PendingLogin:
+    def __init__(self):
+        self.otp_q = queue.Queue(maxsize=1)   # request thread -> blocked callback
+        self.result = None                    # {"activation":...} on success
+        self.error = None                     # str on failure
+        self.done = threading.Event()         # set when the login thread finishes
+        self.otp_wanted = threading.Event()   # set once otp_callback is waiting
+        self.created = time.time()
+
+
+def _prune_pending():
+    """Drop parked logins older than the TTL (abandoned attempts)."""
+    now = time.time()
+    with _PENDING_LOCK:
+        for lid in [k for k, p in _PENDING.items() if now - p.created > _PENDING_TTL]:
+            _PENDING.pop(lid, None)
+
+
 def setup_login(mail, password, marketplace="us"):
-    """Retrieve activation bytes via an Audible login (no browser).
-
-    Uses the maintained `audible` library: authenticate with the Amazon
-    email/password for the account's marketplace, then fetch the activation
-    bytes over Audible's API and store them exactly as setup_paste does. No
-    Selenium, no browser, pure HTTP + crypto, lazy-imported here so a dependency
-    issue can never break decrypt/health.
-
-    Challenge handling is intentionally minimal (see proposal step 11): if Amazon
-    demands a CAPTCHA, OTP/2FA, or other verification, we do NOT try to satisfy
-    it interactively (a single stateless request can't); we raise a clear error
-    pointing the user at the reliable paste-bytes path instead.
+    """Start an Audible login. Returns either the final result (no 2FA needed) or
+    {"otp_required": True, "login_id": ...} to be completed via setup_login_otp.
     """
     if _activation_bytes():
         raise RuntimeError("already configured; setup is only available on first run")
     if not mail or not password:
         raise RuntimeError("Audible email and password are required")
+    _prune_pending()
 
     try:
-        import audible
+        import audible  # noqa: F401  (probe the dep early, with a clear error)
     except ImportError as e:
         raise RuntimeError("login retrieval unavailable: the audible library is not installed (%s)" % e)
 
-    # A challenge callback that refuses: Amazon is asking for CAPTCHA/OTP/CVF,
-    # which this non-interactive path can't satisfy. Raising here aborts the
-    # login with an actionable message instead of hanging.
-    def _refuse(*_args, **_kwargs):
+    pending = _PendingLogin()
+    login_id = secrets.token_hex(8)
+
+    def _otp_callback():
+        # Called by the library when it hits the 2FA prompt. Signal the waiting
+        # request, then block until setup_login_otp delivers a code (or we time
+        # out, which aborts the login).
+        pending.otp_wanted.set()
+        try:
+            return pending.otp_q.get(timeout=_OTP_WAIT)
+        except queue.Empty:
+            raise _ChallengeRequired()
+
+    def _refuse(*_a, **_k):
         raise _ChallengeRequired()
 
+    def _run():
+        try:
+            import audible
+            auth = audible.Authenticator.from_login(
+                username=mail,
+                password=password,
+                locale=marketplace,
+                captcha_callback=_refuse,
+                otp_callback=_otp_callback,
+                cvf_callback=_refuse,
+                approval_callback=_refuse,
+            )
+            abytes = auth.get_activation_bytes(extract=True)
+            if not abytes:
+                raise RuntimeError("login returned no activation bytes")
+            stored = _store_bytes(abytes)
+            pending.result = {"activation": True, "source": "login", "bytes_len": len(stored)}
+        except _ChallengeRequired:
+            pending.error = (
+                "Audible asked for a CAPTCHA (or the OTP timed out). Paste your "
+                "8-char activation bytes instead."
+            )
+        except Exception as e:
+            pending.error = "Audible login failed: %s. Try the paste-bytes path." % (str(e)[:300])
+        finally:
+            pending.done.set()
+
+    with _PENDING_LOCK:
+        _PENDING[login_id] = pending
+    threading.Thread(target=_run, daemon=True).start()
+
+    # Wait briefly for the login to either finish (no 2FA) or reach the OTP
+    # prompt. Whichever happens first decides the response.
+    while True:
+        if pending.done.wait(0.2):
+            with _PENDING_LOCK:
+                _PENDING.pop(login_id, None)
+            if pending.error:
+                raise RuntimeError(pending.error)
+            return pending.result
+        if pending.otp_wanted.is_set():
+            return {"otp_required": True, "login_id": login_id,
+                    "message": "Enter the 2FA / OTP code Audible just sent."}
+
+
+def setup_login_otp(login_id, otp):
+    """Deliver the OTP code to a parked login (step 2) and return its result."""
+    if not otp:
+        raise RuntimeError("OTP code is required")
+    with _PENDING_LOCK:
+        pending = _PENDING.get(login_id)
+    if pending is None:
+        raise RuntimeError("login session expired or unknown; start the login again")
+
     try:
-        auth = audible.Authenticator.from_login(
-            username=mail,
-            password=password,
-            locale=marketplace,
-            captcha_callback=_refuse,
-            otp_callback=_refuse,
-            cvf_callback=_refuse,
-            approval_callback=_refuse,
-        )
-        abytes = auth.get_activation_bytes(extract=True)
-    except _ChallengeRequired:
-        raise RuntimeError(
-            "Audible asked for a CAPTCHA or 2FA/OTP code, which automatic login "
-            "can't complete here. Paste your 8-char activation bytes instead."
-        )
-    except Exception as e:
-        # Wrong credentials, wrong marketplace, network, etc.
-        raise RuntimeError("Audible login failed: %s. Try the paste-bytes path." % (str(e)[:300]))
+        pending.otp_q.put_nowait(str(otp).strip())
+    except queue.Full:
+        raise RuntimeError("an OTP was already submitted for this login")
 
-    if not abytes:
-        raise RuntimeError("login succeeded but returned no activation bytes; use paste instead")
-
-    # _store_bytes validates the 8-hex shape and persists atomically.
-    stored = _store_bytes(abytes)
-    return {"activation": True, "source": "login", "bytes_len": len(stored)}
-
-
-class _ChallengeRequired(Exception):
-    """Internal: raised by the challenge callbacks to abort a login that needs
-    interactive CAPTCHA/OTP/CVF verification."""
+    if not pending.done.wait(60):
+        raise RuntimeError("login timed out after submitting the OTP; try again")
+    with _PENDING_LOCK:
+        _PENDING.pop(login_id, None)
+    if pending.error:
+        raise RuntimeError(pending.error)
+    return pending.result
 
 
 # --- HTTP ---------------------------------------------------------------------
@@ -337,7 +424,11 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
             if req.get("bytes"):
                 result = setup_paste(req.get("bytes"))
+            elif req.get("login_id"):
+                # Step 2 of a two-step login: deliver the OTP code.
+                result = setup_login_otp(req.get("login_id"), req.get("otp", ""))
             else:
+                # Step 1: start the login (may come back needing an OTP).
                 result = setup_login(
                     req.get("mail", ""),
                     req.get("password", ""),

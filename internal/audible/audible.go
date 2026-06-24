@@ -129,49 +129,86 @@ func (c *Client) health(ctx context.Context) (*healthResponse, error) {
 	return &h, nil
 }
 
+// LoginResult is the outcome of a login step. When OTPRequired is true the
+// account has 2FA: the caller must collect the one-time code and call
+// SetupLoginOTP with LoginID to finish. Otherwise the login is complete (the
+// activation bytes were stored).
+type LoginResult struct {
+	OTPRequired bool
+	LoginID     string
+	Message     string
+}
+
+// SetupLogin starts an Audible login with the Amazon email/password (no browser;
+// the sidecar uses the audible library's API flow). marketplace is the account's
+// region country code (e.g. "us", "uk", "de"); empty defaults to "us". If the
+// account has 2FA, the returned LoginResult has OTPRequired=true and a LoginID:
+// the one-time code does not exist until this call triggers it, so the caller
+// then prompts for the code and calls SetupLoginOTP. A CAPTCHA (or any other
+// non-OTP challenge) fails clearly; callers fall back to SetupBytes (paste).
+func (c *Client) SetupLogin(ctx context.Context, mail, password, marketplace string) (LoginResult, error) {
+	return c.setupLogin(ctx, map[string]any{"mail": mail, "password": password, "marketplace": marketplace})
+}
+
+// SetupLoginOTP delivers the 2FA one-time code to a login that returned
+// OTPRequired, completing it. loginID comes from the SetupLogin result.
+func (c *Client) SetupLoginOTP(ctx context.Context, loginID, otp string) (LoginResult, error) {
+	return c.setupLogin(ctx, map[string]any{"login_id": loginID, "otp": otp})
+}
+
+// setupLogin posts a login step and decodes the OTP-aware response.
+func (c *Client) setupLogin(ctx context.Context, payload map[string]any) (LoginResult, error) {
+	r, err := c.postSetup(ctx, payload)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if !r.OK {
+		return LoginResult{}, errors.New(r.Error)
+	}
+	return LoginResult{OTPRequired: r.OTPRequired, LoginID: r.LoginID, Message: r.Message}, nil
+}
+
 // SetupBytes stores user-pasted activation bytes (8 hex chars) on the sidecar.
 // This is the reliable primary setup path. Returns an error if already
 // configured or if the value is rejected.
 func (c *Client) SetupBytes(ctx context.Context, activationBytes string) error {
-	return c.setup(ctx, map[string]any{"bytes": activationBytes})
+	r, err := c.postSetup(ctx, map[string]any{"bytes": activationBytes})
+	if err != nil {
+		return err
+	}
+	if !r.OK {
+		// Sidecar message verbatim; the web/CLI caller adds the user-facing
+		// prefix, so wrapping here would double it.
+		return errors.New(r.Error)
+	}
+	return nil
 }
 
-// SetupLogin asks the sidecar to retrieve activation bytes by logging in to
-// Audible with the Amazon email/password (no browser; the sidecar uses the
-// audible library's API flow). marketplace is the account's region country code
-// (e.g. "us", "uk", "de"); empty defaults to "us" in the sidecar. This path
-// fails clearly if Amazon demands a CAPTCHA or 2FA/OTP code, in which case
-// callers fall back to SetupBytes (paste).
-func (c *Client) SetupLogin(ctx context.Context, mail, password, marketplace string) error {
-	return c.setup(ctx, map[string]any{"mail": mail, "password": password, "marketplace": marketplace})
+type setupResponse struct {
+	OK          bool   `json:"ok"`
+	Error       string `json:"error"`
+	OTPRequired bool   `json:"otp_required"`
+	LoginID     string `json:"login_id"`
+	Message     string `json:"message"`
 }
 
-func (c *Client) setup(ctx context.Context, payload map[string]any) error {
+func (c *Client) postSetup(ctx context.Context, payload map[string]any) (setupResponse, error) {
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/setup", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return setupResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("sidecar unreachable: %w", err)
+		return setupResponse{}, fmt.Errorf("sidecar unreachable: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	var r struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
+	var r setupResponse
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return fmt.Errorf("decode setup response: %w", err)
+		return setupResponse{}, fmt.Errorf("decode setup response: %w", err)
 	}
-	if !r.OK {
-		// Return the sidecar's message verbatim; the web/CLI caller adds the
-		// user-facing "audiobook setup failed: " context, so wrapping it here
-		// would double the prefix.
-		return errors.New(r.Error)
-	}
-	return nil
+	return r, nil
 }
 
 func (c *Client) do(ctx context.Context, jr jobRequest) (*jobResponse, error) {

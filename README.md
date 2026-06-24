@@ -278,7 +278,9 @@ Built but not yet verified against a real run:
   setup card (paste activation bytes) HAS been verified end-to-end against the
   live stack: a paste-bytes POST wrote `secrets/audible_activation_bytes` and the
   card then disappeared. The audiobook **login** mode (Amazon email/password ->
-  `audible` library -> activation bytes, no browser) is implemented and its
-  failure path is verified (a junk login hit a real Amazon CAPTCHA and returned
-  the clean paste-fallback error); a successful login needs real credentials and
-  is unverified.
+  `audible` library -> activation bytes, no browser; two-step for 2FA accounts,
+  the form prompts for the OTP code) is implemented; it is best-effort, a CAPTCHA
+  always fails and the form says so. Verified mechanically (the two-step OTP
+  threading bridge end to end against the worker; a junk login hit a real Amazon
+  CAPTCHA and returned the clean paste-fallback error); a real successful login
+  needs real credentials + a live OTP and is unverified.
