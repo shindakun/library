@@ -38,3 +38,7 @@ package-lock.json
 
 # OS / editor
 .DS_Store
+
+# Python bytecode cache (sidecar workers)
+__pycache__/
+*.pyc
