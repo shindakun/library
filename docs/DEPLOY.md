@@ -99,15 +99,32 @@ end with the same files in `secrets/`.
 
 ### Web form (default, headless-friendly)
 
-On first run, with `secrets/` empty, the library page shows a **setup form**
-instead of the catalog. Open `http://<lan-ip>:8080/`, enter a fresh / throwaway
-AdobeID, password, and ADE version (2.0 is the default), and submit. The web
-service forwards the credentials to the sidecar, which registers with Adobe and
-writes `secrets/`. After that the form disappears and the endpoint refuses.
+On first run, while a sidecar is enabled but unconfigured, the library page shows
+a **first-run setup banner above the catalog** (the library stays browsable).
+Each enabled-but-unconfigured sidecar gets its own card; a disabled or
+unreachable sidecar shows nothing.
+
+Open `http://<lan-ip>:8080/`. For **Ebook DRM (Adobe)**, enter a fresh /
+throwaway AdobeID, password, and ADE version (2.0 is the default), and submit:
+the web service forwards the credentials to the ebook sidecar, which registers
+with Adobe and writes `secrets/`. After that the card disappears and the endpoint
+refuses.
 
 Credentials travel over your LAN as plain HTTP to the local sidecar and are used
 only to register; they are not stored (only the resulting activation files and
 `.der` key are kept). Keep the service LAN-only.
+
+### Audiobook setup (Audible activation bytes)
+
+If the audiobook sidecar is enabled, the same banner shows an **Audiobook DRM
+(Audible)** card with two modes. **Paste bytes** (the reliable path): paste your
+account's 8 hex activation-byte characters and save. **Audible login**: enter
+your Audible email/password to have the sidecar retrieve them (this may be
+unavailable in a given build, in which case it reports a clear error, use paste
+instead). Either way the bytes are written to `secrets/audible_activation_bytes`
+and the card disappears. You can also set them from a shell with
+`make audiobook-setup BYTES=<8 hex chars>`. The bytes are an account secret, sent
+over your LAN to the local sidecar and stored only there.
 
 ### CLI (the proven fallback)
 

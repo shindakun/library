@@ -19,37 +19,67 @@
 <body>
 <header>
   <h1>Library</h1>
-  {{if not .NeedsSetup}}
   <a class="nav-import" href="/imports">Import</a>
   <form class="search" method="get" action="/">
     <input type="search" name="q" placeholder="Search title, author…" value="{{.Query}}">
   </form>
   <button id="view-btn" class="view-toggle" type="button" onclick="toggleView()" title="Toggle grid/table view">Table</button>
-  {{end}}
   <button id="theme-btn" class="theme-toggle" type="button" title="Theme" aria-label="Theme">🌙</button>
 </header>
-{{if .NeedsSetup}}
+{{if .Setup.Any}}
 <div class="setup">
   <h2>First-run setup</h2>
-  <p>Authorize an Adobe account to fulfill and decrypt DRMed books. Use a fresh
-  or throwaway AdobeID. This runs once; the form disappears after.</p>
-  <form method="post" action="/api/setup">
-    <label>AdobeID email<input type="email" name="mail" required autocomplete="username"></label>
-    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
-    <label>ADE version
-      <select name="ade_version">
-        <option value="1" selected>2.0 (recommended)</option>
-        <option value="2">3.0</option>
-      </select>
-    </label>
-    <button type="submit">Authorize</button>
-  </form>
-  <p class="hint">Sent over your LAN to the local sidecar; credentials are used
-  only to register with Adobe and are not stored (only the resulting activation
-  + key are kept). On a headless host you can instead run the CLI setup; see
-  docs/DEPLOY.md.</p>
+  {{if .Setup.Ebook}}
+  <div class="setup-card">
+    <h3>Ebook DRM (Adobe)</h3>
+    <p>Authorize an Adobe account to fulfill and decrypt DRMed books. Use a fresh
+    or throwaway AdobeID. This runs once; the section disappears after.</p>
+    <form method="post" action="/api/setup">
+      <label>AdobeID email<input type="email" name="mail" required autocomplete="username"></label>
+      <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+      <label>ADE version
+        <select name="ade_version">
+          <option value="1" selected>2.0 (recommended)</option>
+          <option value="2">3.0</option>
+        </select>
+      </label>
+      <button type="submit">Authorize</button>
+    </form>
+    <p class="hint">Sent over your LAN to the local sidecar; credentials are used
+    only to register with Adobe and are not stored (only the resulting activation
+    + key are kept). On a headless host you can instead run the CLI setup; see
+    docs/DEPLOY.md.</p>
+  </div>
+  {{end}}
+  {{if .Setup.Audiobook}}
+  <div class="setup-card">
+    <h3>Audiobook DRM (Audible)</h3>
+    <p>Store your Audible activation bytes so .aax audiobooks can be decrypted.
+    This runs once; the section disappears after.</p>
+    <div class="setup-tabs">
+      <button type="button" class="tab active" onclick="audMode('bytes')" id="aud-tab-bytes">Paste bytes</button>
+      <button type="button" class="tab" onclick="audMode('login')" id="aud-tab-login">Audible login</button>
+    </div>
+    <form method="post" action="/api/setup/audiobook" id="aud-bytes-form">
+      <input type="hidden" name="mode" value="bytes">
+      <label>Activation bytes<input type="text" name="bytes" required pattern="[0-9a-fA-F]{8}" maxlength="8"
+        placeholder="8 hex chars (e.g. 1a2b3c4d)" autocomplete="off"></label>
+      <button type="submit">Save bytes</button>
+    </form>
+    <form method="post" action="/api/setup/audiobook" id="aud-login-form" style="display:none">
+      <input type="hidden" name="mode" value="login">
+      <label>Audible email<input type="email" name="mail" autocomplete="username"></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password"></label>
+      <button type="submit">Retrieve &amp; save</button>
+    </form>
+    <p class="hint">Bytes are an account secret, sent over your LAN to the local
+    sidecar and stored only there. Pasting is the reliable path; login retrieval
+    may be unavailable in this build (it then reports a clear error). See
+    docs/DEPLOY.md.</p>
+  </div>
+  {{end}}
 </div>
-{{else}}
+{{end}}
 {{if .Uploaded}}<div class="banner">Queued <strong>{{.Uploaded}}</strong> for import. It will appear below once fulfilled &amp; decrypted (refresh in a few seconds).</div>{{end}}
 {{if .Books}}
 <div class="grid">
@@ -110,7 +140,6 @@
 </div>
 {{else}}
 <p class="empty">No books yet. Drop EPUBs in <code>data/library/</code> and run a scan, or import an <code>.acsm</code>/<code>.epub</code> via the Import button.</p>
-{{end}}
 {{end}}
 </body>
 </html>{{end}}

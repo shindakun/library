@@ -269,6 +269,9 @@ Working and verified end-to-end via the compose stack:
 
 Built but not yet verified against a real run:
 
-- **Web first-run setup**: the form + sidecar `/setup` are wired and render
-  correctly, but the Adobe registration path has not been exercised end-to-end
-  (the CLI `setup.py` path is the proven one).
+- **Web first-run setup (Adobe/ebook)**: the form + sidecar `/setup` are wired
+  and render correctly, but the Adobe registration path has not been exercised
+  end-to-end (the CLI `setup.py` path is the proven one). The **audiobook**
+  setup card (paste activation bytes) HAS been verified end-to-end against the
+  live stack: a paste-bytes POST wrote `secrets/audible_activation_bytes` and the
+  card then disappeared. The audiobook login-retrieval mode is still a stub.

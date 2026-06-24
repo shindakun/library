@@ -380,13 +380,26 @@ to open there).
    unit cases are in `TestImportable`/`TestSourceFor`. A real `.aax` decrypt
    still needs the user's activation bytes (not yet extracted), the one path
    not exercisable here. vet/gofmt/golangci-lint clean, full suite green.
-7. **Setup UI generalization (gap found in the code):** today `needsSetup` and the
-   index form are singular and AdobeID-only. Generalize: the first-run page shows
-   an independent **Ebook DRM** section (if the ebook sidecar is enabled +
-   unconfigured) AND/OR an **Audiobook DRM** section (if the audiobook sidecar is
-   enabled + unconfigured). Each form posts to its own setup endpoint; the
-   audiobook form has a mode toggle (login vs paste-bytes). A disabled sidecar's
-   section never renders. This is the "one / other / both / none" surface (§0).
+7. (DONE) **Setup UI generalization.** The singular AdobeID-only `needsSetup`
+   bool became a `setupState{Ebook, Audiobook}` that probes each sidecar
+   independently. The first-run area is now a **banner above the library** (not a
+   full-page gate, decided with the user): the library stays browsable while
+   setup is pending. It shows an **Ebook DRM (Adobe)** card when the ebook
+   sidecar is enabled + unconfigured AND/OR an **Audiobook DRM (Audible)** card
+   when the audiobook sidecar is. The audiobook card has a **paste-bytes / login
+   tab toggle** (`audMode()` in app.js); paste posts `mode=bytes`, login posts
+   `mode=login`, both to `POST /api/setup/audiobook` (`apiSetupAudiobook` ->
+   `SetupBytes`/`SetupLogin`). A nil/unreachable sidecar leaves its card hidden,
+   so the "one / other / both / none" surface (§0) holds. `web.New` takes the
+   audiobook client; wired in `main.go`. Tested: setupState probing
+   (unconfigured/configured/unreachable), the handler (bytes/login/no-client/
+   empty), and a real-template render asserting the card + tabs appear. Verified
+   end to end against the LIVE stack: the running library showed the card from
+   the real running sidecar, a paste-bytes POST wrote `secrets/
+   audible_activation_bytes` and the card then disappeared (throwaway value
+   removed afterwards). The login path remains the documented stub from step 2
+   (the sidecar returns a clear "not available" error). vet/gofmt/golangci-lint
+   clean, JS syntax-checked, full suite green.
 8. Player: `audio.html` + `audio.js` + `/chapters`, format-dispatched at
    `/read/{slug}`; range-served file for seeking; position persisted. (Browser-
    verified by the user; JS checked statically, per convention.)

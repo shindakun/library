@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steve/library/internal/audible"
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/drm"
@@ -35,9 +36,12 @@ type Server struct {
 	// ImportDir is where browser uploads land, so the import watcher picks them
 	// up and runs the same fulfill/decrypt pipeline as a manual drop.
 	ImportDir string
-	// DRM drives the sidecar; used for the first-run setup form (check whether
-	// Adobe is configured, and run setup). May be nil (setup form disabled).
+	// DRM drives the ebook sidecar; used for the first-run setup form (check
+	// whether Adobe is configured, and run setup). May be nil (section hidden).
 	DRM *drm.Client
+	// Audible drives the audiobook sidecar; backs the audiobook setup form
+	// (activation bytes via paste or login). May be nil (section hidden).
+	Audible *audible.Client
 	// Jobs is the import-job registry, read for the /imports page + SSE stream.
 	// May be nil (the imports endpoints then report an empty list).
 	Jobs *ingest.Jobs
@@ -45,12 +49,12 @@ type Server struct {
 }
 
 // New parses templates and returns a Server.
-func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client, jobs *ingest.Jobs) (*Server, error) {
+func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client, audibleClient *audible.Client, jobs *ingest.Jobs) (*Server, error) {
 	tpl, err := template.ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
-	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, Jobs: jobs, tpl: tpl}, nil
+	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, Audible: audibleClient, Jobs: jobs, tpl: tpl}, nil
 }
 
 // Register wires the browser + API routes onto mux.
@@ -73,6 +77,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/scan", s.apiScan)
 	mux.HandleFunc("POST /api/upload", s.apiUpload)
 	mux.HandleFunc("POST /api/setup", s.apiSetup)
+	mux.HandleFunc("POST /api/setup/audiobook", s.apiSetupAudiobook)
 	mux.HandleFunc("GET /imports", s.imports)
 	mux.HandleFunc("GET /api/imports", s.apiImports)
 	mux.HandleFunc("GET /api/imports/stream", s.apiImportsStream)
@@ -90,10 +95,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "index.html", map[string]any{
-		"Books":      books,
-		"Query":      r.URL.Query().Get("q"),
-		"Uploaded":   r.URL.Query().Get("uploaded"),
-		"NeedsSetup": s.needsSetup(r.Context()),
+		"Books":    books,
+		"Query":    r.URL.Query().Get("q"),
+		"Uploaded": r.URL.Query().Get("uploaded"),
+		"Setup":    s.setupState(r.Context()),
 	})
 }
 
@@ -357,18 +362,78 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// needsSetup reports whether the first-run setup form should be shown: a DRM
-// sidecar exists, is reachable, and is not yet configured. Any uncertainty
-// (no sidecar, unreachable) returns false so the normal library still renders.
-func (s *Server) needsSetup(ctx context.Context) bool {
-	if s.DRM == nil {
-		return false
+// apiSetupAudiobook stores the Audible activation bytes from the first-run form.
+// Two modes (the form's "mode" field):
+//
+//	bytes  -> paste 8 hex activation-byte chars directly (the reliable path)
+//	login  -> Audible email/password; the sidecar retrieves the bytes (may be
+//	          unavailable in a given build, which returns a clear error)
+//
+// Either way the bytes land in /secrets via the sidecar; the section disappears
+// once configured.
+func (s *Server) apiSetupAudiobook(w http.ResponseWriter, r *http.Request) {
+	if s.Audible == nil {
+		http.Error(w, "audiobook sidecar not configured", http.StatusServiceUnavailable)
+		return
 	}
-	configured, err := s.DRM.Configured(ctx)
+	var err error
+	switch r.FormValue("mode") {
+	case "login":
+		mail := r.FormValue("mail")
+		password := r.FormValue("password")
+		if mail == "" || password == "" {
+			http.Error(w, "Audible email and password are required for login retrieval", http.StatusBadRequest)
+			return
+		}
+		err = s.Audible.SetupLogin(r.Context(), mail, password)
+	default: // "bytes" (paste) is the default and reliable path
+		bytesHex := strings.TrimSpace(r.FormValue("bytes"))
+		if bytesHex == "" {
+			http.Error(w, "activation bytes are required", http.StatusBadRequest)
+			return
+		}
+		err = s.Audible.SetupBytes(r.Context(), bytesHex)
+	}
 	if err != nil {
-		return false // sidecar unreachable; don't block the library on it
+		http.Error(w, "audiobook setup failed: "+err.Error(), http.StatusBadGateway)
+		return
 	}
-	return !configured
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		writeJSON(w, map[string]bool{"configured": true})
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// setupState tells the index template which first-run setup sections to show.
+// Each sidecar is independent (the "one / other / both / none" design): a
+// section appears only when that sidecar is enabled (client non-nil), reachable,
+// and not yet configured. The library renders normally regardless; setup is a
+// banner above it, not a gate.
+type setupState struct {
+	Ebook     bool // ebook (Adobe) sidecar needs setup
+	Audiobook bool // audiobook (activation bytes) sidecar needs setup
+}
+
+// Any reports whether any setup section should be shown.
+func (s setupState) Any() bool { return s.Ebook || s.Audiobook }
+
+// setupState probes both sidecars. Any uncertainty for a sidecar (nil client or
+// unreachable) leaves that section hidden, so a down or absent sidecar never
+// blocks or clutters the library.
+func (s *Server) setupState(ctx context.Context) setupState {
+	var st setupState
+	if s.DRM != nil {
+		if configured, err := s.DRM.Configured(ctx); err == nil {
+			st.Ebook = !configured
+		}
+	}
+	if s.Audible != nil {
+		if configured, err := s.Audible.Configured(ctx); err == nil {
+			st.Audiobook = !configured
+		}
+	}
+	return st
 }
 
 func (s *Server) apiScan(w http.ResponseWriter, r *http.Request) {

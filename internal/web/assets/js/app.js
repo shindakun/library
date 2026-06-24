@@ -115,6 +115,21 @@ function syncViewButton() {
     document.body.getAttribute("data-view") === "table" ? "Grid" : "Table";
 }
 
+// --- Audiobook setup mode toggle (first-run form) ---
+// Switches the audiobook DRM section between paste-bytes and Audible-login,
+// showing one form and its active tab at a time.
+function audMode(mode) {
+  const bytes = mode === "bytes";
+  const bf = document.getElementById("aud-bytes-form");
+  const lf = document.getElementById("aud-login-form");
+  if (bf) bf.style.display = bytes ? "" : "none";
+  if (lf) lf.style.display = bytes ? "none" : "";
+  const bt = document.getElementById("aud-tab-bytes");
+  const lt = document.getElementById("aud-tab-login");
+  if (bt) bt.classList.toggle("active", bytes);
+  if (lt) lt.classList.toggle("active", !bytes);
+}
+
 // --- Client-side column sort (index table) ---
 // The whole library is on the page, so sorting is a DOM reorder, no server
 // round-trip. Sort keys live in each row's data-* attributes.

@@ -131,7 +131,7 @@ func main() {
 		SidecarPath: pathMapper(*dataDir, env("SIDECAR_DATA", "/data")),
 	}
 
-	websrv, err := web.New(cat, importDir, drmClient, importer.JobRegistry())
+	websrv, err := web.New(cat, importDir, drmClient, audibleClient, importer.JobRegistry())
 	if err != nil {
 		log.Fatalf("web: %v", err)
 	}

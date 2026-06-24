@@ -134,14 +134,22 @@ input[type=search]:focus{ outline:none; border-color:var(--accent); box-shadow:0
 .empty { padding:48px 24px; color:var(--faint); }
 
 /* First-run setup form */
-.setup { max-width:440px; margin:48px auto; padding:24px 28px; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
-.setup h2 { margin:0 0 8px; font-size:20px; }
+.setup { max-width:720px; margin:24px auto; padding:20px 24px; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+.setup h2 { margin:0 0 12px; font-size:20px; }
 .setup p { color:var(--muted); font-size:14px; }
-.setup form { display:flex; flex-direction:column; gap:12px; margin:16px 0 8px; }
+/* Independent ebook / audiobook sections sit side by side when both show. */
+.setup .setup-card { padding:14px 16px; margin-top:12px; border:1px solid var(--border); border-radius:10px; }
+.setup .setup-card:first-of-type { margin-top:0; }
+.setup h3 { margin:0 0 6px; font-size:15px; }
+.setup form { display:flex; flex-direction:column; gap:12px; margin:14px 0 8px; }
 .setup label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
 .setup input, .setup select { width:100%; padding:8px 10px; border:1px solid var(--input-border); border-radius:8px; background:var(--bg); color:var(--fg); font-size:14px; }
-.setup button { padding:9px 14px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
+.setup button[type=submit] { padding:9px 14px; border:1px solid var(--accent); background:var(--accent); color:var(--accent-fg); border-radius:8px; cursor:pointer; font-size:14px; }
 .setup .hint { font-size:12px; color:var(--faint); }
+/* Paste-bytes / login tab switch in the audiobook section. */
+.setup-tabs { display:flex; gap:8px; margin:12px 0 4px; }
+.setup-tabs .tab { padding:6px 12px; border:1px solid var(--border); background:var(--bg); color:var(--muted); border-radius:8px; cursor:pointer; font-size:13px; }
+.setup-tabs .tab.active { border-color:var(--accent); color:var(--fg); }
 
 /* --- Grid (cover) view --- */
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:22px; padding:26px; }
