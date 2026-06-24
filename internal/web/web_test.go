@@ -110,6 +110,36 @@ func TestUploadAcceptsComic(t *testing.T) {
 	}
 }
 
+func TestUploadAcceptsAax(t *testing.T) {
+	s, imp := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, uploadReq(t, "Book.aax", "fake-aax-bytes", "application/json"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for .aax; body: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(imp, "Book.aax")); err != nil {
+		t.Errorf("uploaded .aax not staged in import dir: %v", err)
+	}
+}
+
+func TestUploadRejectsAaxc(t *testing.T) {
+	// .aaxc needs its sibling .voucher, which a single-file upload can't carry,
+	// so the upload form rejects it (drop-in only).
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, uploadReq(t, "Book.aaxc", "fake", "application/json"))
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %d, want 415 for .aaxc (needs its voucher; drop-in only)", rec.Code)
+	}
+}
+
 func TestUploadRejectsBadExtension(t *testing.T) {
 	s, imp := newTestServer(t)
 	mux := http.NewServeMux()

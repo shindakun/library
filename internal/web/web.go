@@ -327,21 +327,25 @@ func (s *Server) apiSaveRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadableExt reports whether an uploaded file's extension is one the import
-// pipeline accepts. Kept in sync with ingest.importable: .acsm/.epub go through
-// the DRM pipeline, .cbz/.cbr are comics (a .cbr is converted to .cbz at import).
+// pipeline accepts via the SINGLE-FILE upload form. Kept in sync with
+// ingest.importable, except .aaxc: that audiobook needs its sibling .voucher,
+// which a one-file upload can't carry, so .aaxc stays drop-in only (drop the
+// .aaxc + .voucher pair into the import dir). .aax is a single file and uploads
+// fine.
 func uploadableExt(ext string) bool {
 	switch ext {
-	case ".acsm", ".epub", ".cbz", ".cbr":
+	case ".acsm", ".epub", ".cbz", ".cbr", ".aax":
 		return true
 	default:
 		return false
 	}
 }
 
-// apiUpload accepts an .acsm, .epub, or .cbz via multipart form and drops it
-// into the import dir, where the watcher runs the same pipeline as a manual file
-// drop. Written atomically (temp + rename) so the watcher never sees a partial
-// file.
+// apiUpload accepts an .acsm, .epub, .cbz, .cbr, or .aax via multipart form and
+// drops it into the import dir, where the watcher runs the same pipeline as a
+// manual file drop. Written atomically (temp + rename) so the watcher never sees
+// a partial file. (.aaxc is not uploadable here: it needs its sibling .voucher,
+// so it is drop-in only.)
 func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	if s.ImportDir == "" {
 		http.Error(w, "uploads not configured", http.StatusServiceUnavailable)
@@ -360,7 +364,7 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
 	if !uploadableExt(ext) {
-		http.Error(w, "only .acsm, .epub, .cbz, or .cbr accepted", http.StatusUnsupportedMediaType)
+		http.Error(w, "only .acsm, .epub, .cbz, .cbr, or .aax accepted (.aaxc needs its .voucher: drop both into the import dir)", http.StatusUnsupportedMediaType)
 		return
 	}
 	name := fileutil.SafeFilename(strings.TrimSuffix(filepath.Base(hdr.Filename), ext)) + ext
