@@ -813,9 +813,14 @@ type ListOptions struct {
 	Query  string // FTS query; empty = all
 	Author string
 	Series string
-	Sort   SortOrder
-	Limit  int
-	Offset int
+	// Format, if set, restricts results to that storage format ("epub" | "cbz" |
+	// "audio"). ExcludeFormat, if set, omits that format. Used by OPDS to keep
+	// audiobooks out of the e-reader feed while exposing them in a dedicated one.
+	Format        string
+	ExcludeFormat string
+	Sort          SortOrder
+	Limit         int
+	Offset        int
 }
 
 // List returns books matching opts. Default ordering is by author, then title;
@@ -843,6 +848,14 @@ func (c *Catalog) List(ctx context.Context, opts ListOptions) ([]*Book, error) {
 		from += " JOIN book_series bs ON bs.book_id=b.id JOIN series s ON s.id=bs.series_id"
 		where = append(where, "s.name = ?")
 		args = append(args, opts.Series)
+	}
+	if opts.Format != "" {
+		where = append(where, "b.format = ?")
+		args = append(args, opts.Format)
+	}
+	if opts.ExcludeFormat != "" {
+		where = append(where, "b.format <> ?")
+		args = append(args, opts.ExcludeFormat)
 	}
 	q := "SELECT b.id FROM " + from
 	if len(where) > 0 {

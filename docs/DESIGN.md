@@ -273,11 +273,16 @@ GET  /static/...             embedded CSS/JS/vendor assets
 
 # --- OPDS (consumed by any OPDS client) ---
 GET  /opds                   root navigation feed (links to subsections)
-GET  /opds/new               recently added (acquisition feed)
-GET  /opds/all               full acquisition feed (paginated, rel=next/prev)
-GET  /opds/search?q=         search results as an acquisition feed
+GET  /opds/new               recently added (acquisition feed; excludes audio)
+GET  /opds/all               full acquisition feed (paginated; excludes audio)
+GET  /opds/search?q=         search results as an acquisition feed (excludes audio)
+GET  /opds/audiobooks        audio-only acquisition feed (audio/mp4)
 GET  /opds/opensearch.xml    OpenSearch description doc
 ```
+
+The e-reader feeds (`/new`, `/all`, `/search`) exclude audiobooks because the
+verified target device (Xteink X4) is e-ink and cannot play audio; audiobooks
+have their own `/opds/audiobooks` feed for audio-capable clients.
 
 Per-author and per-series OPDS navigation feeds are a possible future addition;
 v1 ships the root, new, all, and search feeds above.

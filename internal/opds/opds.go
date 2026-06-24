@@ -47,6 +47,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /opds/all", h.all)
 	mux.HandleFunc("GET /opds/new", h.newest)
 	mux.HandleFunc("GET /opds/search", h.search)
+	mux.HandleFunc("GET /opds/audiobooks", h.audiobooks)
 	mux.HandleFunc("GET /opds/opensearch.xml", h.openSearchDesc)
 }
 
@@ -58,6 +59,7 @@ const (
 	typeAcqFeed  = "application/atom+xml;profile=opds-catalog;kind=acquisition"
 	typeEpub     = "application/epub+zip"
 	typeComic    = "application/vnd.comicbook+zip"
+	typeAudio    = "audio/mp4" // .m4b is MP4 audio
 	relSelf      = "self"
 	relStart     = "start"
 	relNext      = "next"
@@ -121,24 +123,36 @@ func (h *Handler) root(w http.ResponseWriter, r *http.Request) {
 		Entries: []entry{
 			navEntry("new", "Recently Added", "Newest books first", h.abs("/opds/new")),
 			navEntry("all", "All Books", "Every book, paged", h.abs("/opds/all")),
+			navEntry("audiobooks", "Audiobooks", "Audio editions (audio-capable clients)", h.abs("/opds/audiobooks")),
 		},
 	}
 	writeFeed(w, &f)
 }
 
+// The default feeds exclude audiobooks: the verified target device (Xteink X4)
+// is an e-ink e-reader that cannot play audio, so an audiobook there would be a
+// download that fails to open. Audiobooks live in their own /opds/audiobooks
+// feed (linked from the nav root) for audio-capable OPDS clients.
 func (h *Handler) all(w http.ResponseWriter, r *http.Request) {
-	h.acquisitionPage(w, r, "all", "All Books", catalog.ListOptions{})
+	h.acquisitionPage(w, r, "all", "All Books", catalog.ListOptions{ExcludeFormat: "audio"})
 }
 
 func (h *Handler) newest(w http.ResponseWriter, r *http.Request) {
 	// "Recently Added" sorts newest-first; the default (all/library) sort is by
 	// author then title.
-	h.acquisitionPage(w, r, "new", "Recently Added", catalog.ListOptions{Sort: catalog.SortRecent})
+	h.acquisitionPage(w, r, "new", "Recently Added", catalog.ListOptions{Sort: catalog.SortRecent, ExcludeFormat: "audio"})
 }
 
 func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
-	h.acquisitionPage(w, r, "search", "Search: "+q, catalog.ListOptions{Query: q})
+	h.acquisitionPage(w, r, "search", "Search: "+q, catalog.ListOptions{Query: q, ExcludeFormat: "audio"})
+}
+
+// audiobooks is the audio-only feed, kept separate from the e-reader feeds so
+// the X4 never lists un-openable audio entries. Audio-capable OPDS clients
+// browse here.
+func (h *Handler) audiobooks(w http.ResponseWriter, r *http.Request) {
+	h.acquisitionPage(w, r, "audiobooks", "Audiobooks", catalog.ListOptions{Format: "audio", Sort: catalog.SortRecent})
 }
 
 // acquisitionPage renders ONE bounded page of an acquisition feed and attaches
@@ -215,10 +229,14 @@ func (h *Handler) bookEntry(b *catalog.Book) entry {
 // acquisitionType maps a book's storage format to its OPDS acquisition media
 // type. Defaults to epub for any unknown format, matching the catalog default.
 func acquisitionType(format string) string {
-	if format == "cbz" {
+	switch format {
+	case "cbz":
 		return typeComic
+	case "audio":
+		return typeAudio
+	default:
+		return typeEpub
 	}
-	return typeEpub
 }
 
 // openSearchDesc advertises the search endpoint per the OpenSearch spec, which

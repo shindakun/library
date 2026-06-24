@@ -426,7 +426,21 @@ to open there).
    tracks playback, resume restores the saved position, the +/-30s buttons, and
    `sendBeacon` saving on unload. These need a human with ears and a real
    decrypted book; that pass is pending.
-9. OPDS: emit the audio media type (decide on X4 inclusion).
+9. (DONE) OPDS. `acquisitionType` now maps `format=audio` to the `audio/mp4`
+   media type. **X4 inclusion decided (with the user): exclude audiobooks from
+   the e-reader feeds, expose them in a dedicated one.** The X4 is e-ink and
+   cannot play audio, so an audiobook in its feed would be an un-openable
+   download. The default feeds (`/opds/all`, `/opds/new`, `/opds/search`) now
+   pass `ExcludeFormat: "audio"`, and a new `/opds/audiobooks` feed
+   (`Format: "audio"`, linked from the nav root) carries the audiobooks with the
+   `audio/mp4` type for audio-capable clients. Filtering is done in the catalog
+   (`ListOptions.Format` / `ExcludeFormat`, new), so the X4 paging chokepoint
+   (`acquisitionPage`) stays correct, no post-filtering that would undersize a
+   page. Tested: audio excluded from all three e-reader feeds (ebook still
+   present), the audiobooks feed lists only audio with `audio/mp4`, the nav root
+   links it, and the type mapping for all four formats. Verified against the live
+   stack (nav link present, `/opds/audiobooks` 200, `/opds/all` unchanged at the
+   real 9 books). vet/gofmt/golangci-lint clean, full suite green.
 10. `.aaxc` fast-follow: voucher-key path in the sidecar; reject voucherless
     `.aaxc` into `failed/`.
 
