@@ -228,18 +228,67 @@ def setup_paste(activation_bytes):
     return {"activation": True, "source": "paste", "bytes_len": len(stored)}
 
 
-def setup_login(mail, password):
-    """Retrieve activation bytes via an Audible login (Selenium).
+def setup_login(mail, password, marketplace="us"):
+    """Retrieve activation bytes via an Audible login (no browser).
 
-    NOTE: this is the best-effort secondary path. audible-activator's flow uses
-    the removed Selenium 3 API and breaks against Audible site changes, so it is
-    not wired up in v1; the reliable path is paste (setup_paste). This stub keeps
-    the contract and returns a clear, actionable error so the UI can fall back.
+    Uses the maintained `audible` library: authenticate with the Amazon
+    email/password for the account's marketplace, then fetch the activation
+    bytes over Audible's API and store them exactly as setup_paste does. No
+    Selenium, no browser, pure HTTP + crypto, lazy-imported here so a dependency
+    issue can never break decrypt/health.
+
+    Challenge handling is intentionally minimal (see proposal step 11): if Amazon
+    demands a CAPTCHA, OTP/2FA, or other verification, we do NOT try to satisfy
+    it interactively (a single stateless request can't); we raise a clear error
+    pointing the user at the reliable paste-bytes path instead.
     """
-    raise RuntimeError(
-        "login retrieval is not available in this build; paste your 8-char "
-        "activation bytes instead (obtain them with audible-activator or similar)"
-    )
+    if _activation_bytes():
+        raise RuntimeError("already configured; setup is only available on first run")
+    if not mail or not password:
+        raise RuntimeError("Audible email and password are required")
+
+    try:
+        import audible
+    except ImportError as e:
+        raise RuntimeError("login retrieval unavailable: the audible library is not installed (%s)" % e)
+
+    # A challenge callback that refuses: Amazon is asking for CAPTCHA/OTP/CVF,
+    # which this non-interactive path can't satisfy. Raising here aborts the
+    # login with an actionable message instead of hanging.
+    def _refuse(*_args, **_kwargs):
+        raise _ChallengeRequired()
+
+    try:
+        auth = audible.Authenticator.from_login(
+            username=mail,
+            password=password,
+            locale=marketplace,
+            captcha_callback=_refuse,
+            otp_callback=_refuse,
+            cvf_callback=_refuse,
+            approval_callback=_refuse,
+        )
+        abytes = auth.get_activation_bytes(extract=True)
+    except _ChallengeRequired:
+        raise RuntimeError(
+            "Audible asked for a CAPTCHA or 2FA/OTP code, which automatic login "
+            "can't complete here. Paste your 8-char activation bytes instead."
+        )
+    except Exception as e:
+        # Wrong credentials, wrong marketplace, network, etc.
+        raise RuntimeError("Audible login failed: %s. Try the paste-bytes path." % (str(e)[:300]))
+
+    if not abytes:
+        raise RuntimeError("login succeeded but returned no activation bytes; use paste instead")
+
+    # _store_bytes validates the 8-hex shape and persists atomically.
+    stored = _store_bytes(abytes)
+    return {"activation": True, "source": "login", "bytes_len": len(stored)}
+
+
+class _ChallengeRequired(Exception):
+    """Internal: raised by the challenge callbacks to abort a login that needs
+    interactive CAPTCHA/OTP/CVF verification."""
 
 
 # --- HTTP ---------------------------------------------------------------------
@@ -289,7 +338,11 @@ class Handler(BaseHTTPRequestHandler):
             if req.get("bytes"):
                 result = setup_paste(req.get("bytes"))
             else:
-                result = setup_login(req.get("mail", ""), req.get("password", ""))
+                result = setup_login(
+                    req.get("mail", ""),
+                    req.get("password", ""),
+                    req.get("marketplace", "us") or "us",
+                )
             self._send(200, {"ok": True, **result})
         except Exception as e:
             self._send(500, {"ok": False, "error": str(e)})

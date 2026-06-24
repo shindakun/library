@@ -277,4 +277,8 @@ Built but not yet verified against a real run:
   end-to-end (the CLI `setup.py` path is the proven one). The **audiobook**
   setup card (paste activation bytes) HAS been verified end-to-end against the
   live stack: a paste-bytes POST wrote `secrets/audible_activation_bytes` and the
-  card then disappeared. The audiobook login-retrieval mode is still a stub.
+  card then disappeared. The audiobook **login** mode (Amazon email/password ->
+  `audible` library -> activation bytes, no browser) is implemented and its
+  failure path is verified (a junk login hit a real Amazon CAPTCHA and returned
+  the clean paste-fallback error); a successful login needs real credentials and
+  is unverified.

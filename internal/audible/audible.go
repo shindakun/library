@@ -136,12 +136,14 @@ func (c *Client) SetupBytes(ctx context.Context, activationBytes string) error {
 	return c.setup(ctx, map[string]any{"bytes": activationBytes})
 }
 
-// SetupLogin asks the sidecar to retrieve activation bytes via an Audible login
-// (Selenium). This is the best-effort secondary path and may be unavailable in a
-// given sidecar build (it returns a clear error then); callers should fall back
-// to SetupBytes.
-func (c *Client) SetupLogin(ctx context.Context, mail, password string) error {
-	return c.setup(ctx, map[string]any{"mail": mail, "password": password})
+// SetupLogin asks the sidecar to retrieve activation bytes by logging in to
+// Audible with the Amazon email/password (no browser; the sidecar uses the
+// audible library's API flow). marketplace is the account's region country code
+// (e.g. "us", "uk", "de"); empty defaults to "us" in the sidecar. This path
+// fails clearly if Amazon demands a CAPTCHA or 2FA/OTP code, in which case
+// callers fall back to SetupBytes (paste).
+func (c *Client) SetupLogin(ctx context.Context, mail, password, marketplace string) error {
+	return c.setup(ctx, map[string]any{"mail": mail, "password": password, "marketplace": marketplace})
 }
 
 func (c *Client) setup(ctx context.Context, payload map[string]any) error {

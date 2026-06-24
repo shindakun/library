@@ -119,12 +119,14 @@ only to register; they are not stored (only the resulting activation files and
 If the audiobook sidecar is enabled, the same banner shows an **Audiobook DRM
 (Audible)** card with two modes. **Paste bytes** (the reliable path): paste your
 account's 8 hex activation-byte characters and save. **Audible login**: enter
-your Audible email/password to have the sidecar retrieve them (this may be
-unavailable in a given build, in which case it reports a clear error, use paste
-instead). Either way the bytes are written to `secrets/audible_activation_bytes`
-and the card disappears. You can also set them from a shell with
-`make audiobook-setup BYTES=<8 hex chars>`. The bytes are an account secret, sent
-over your LAN to the local sidecar and stored only there.
+your Amazon email/password and pick your marketplace (US/UK/DE/...); the sidecar
+logs in to Audible (via the `audible` library, no browser) and fetches the bytes
+for you. If Amazon demands a CAPTCHA or a 2FA/OTP code, the automatic login can't
+complete it and reports a clear error, use paste bytes then. Either way the bytes
+are written to `secrets/audible_activation_bytes` and the card disappears. You
+can also set them from a shell with `make audiobook-setup BYTES=<8 hex chars>`.
+The bytes (and, for login, your credentials) are an account secret, sent over
+your LAN to the local sidecar; only the resulting bytes are stored.
 
 ### CLI (the proven fallback)
 

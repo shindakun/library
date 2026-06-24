@@ -29,16 +29,18 @@ or sharing mechanism.
   is present (enabled) but not yet configured. Generalizes today's single
   AdobeID-only form. If a sidecar is disabled, its section never shows (mirrors
   how the whole form is hidden in no-DRM mode).
-- **Audiobook setup offers BOTH paths:** Audible email/password (Selenium
-  retrieval of activation bytes) OR pasting the 8-hex-char activation bytes
-  directly. The paste path keeps the feature usable if Selenium breaks against an
-  Audible change; login is the no-prior-tooling path.
+- **Audiobook setup offers BOTH paths:** Audible email/password (login retrieval
+  of activation bytes) OR pasting the 8-hex-char activation bytes directly. The
+  paste path keeps the feature usable if login breaks against an Audible change;
+  login is the no-prior-tooling path. (Implemented in step 11 with the `audible`
+  library, NO browser/Selenium; the original plan assumed Selenium, the
+  Selenium-specific notes below are superseded.)
 - **v1 = `.aax`.** `.aaxc` (voucher-key) is a fast-follow (§4.3).
-- **Sidecar lifecycle: always-running, lazy browser.** Sidecars start with the
-  stack (not on demand, which would need Docker-socket access from the Go
-  service). The audiobook sidecar idles as just the ffmpeg-capable server;
-  Selenium/Chromium is a subprocess spawned only during setup and never kept
-  warm (§3.1).
+- **Sidecar lifecycle: always-running.** Sidecars start with the stack (not on
+  demand, which would need Docker-socket access from the Go service). The
+  audiobook sidecar idles as just the ffmpeg-capable server; login retrieval is
+  a pure HTTP/crypto call (the `audible` library), so no browser is ever spawned
+  (the original "lazy browser" concern went away with Selenium).
 
 ## 1. What an `.aax` is, and the one real wrinkle
 
@@ -307,10 +309,10 @@ to open there).
    the package was churn with no behavior value). `EBOOK_SIDECAR_URL` keeps
    `DRM_SIDECAR_URL` as a fallback so existing deploys don't break. Shipped +
    verified (epub import unchanged) before adding audiobooks.
-2. (DONE) `audiobook-sidecar`: container (ffmpeg, stdlib Python), `/health`,
-   `/setup` (paste-bytes built; login a documented stub since audible-activator
-   uses the removed Selenium 3 API and the browser is intentionally not
-   installed), `/job` decrypt (ffmpeg `-activation_bytes -c copy`, `-progress`
+2. (DONE) `audiobook-sidecar`: container (ffmpeg, Python), `/health`,
+   `/setup` (paste-bytes built; login was a documented stub in step 2, now
+   implemented in step 11 via the `audible` library, no Selenium),
+   `/job` decrypt (ffmpeg `-activation_bytes -c copy`, `-progress`
    parsed into a sibling `<out>.progress` file). Optional via empty
    `AUDIOBOOK_SIDECAR_URL`; in dev+prod compose + the release image matrix.
    Verified by building/running the container and exercising the full contract;
@@ -397,9 +399,9 @@ to open there).
    end to end against the LIVE stack: the running library showed the card from
    the real running sidecar, a paste-bytes POST wrote `secrets/
    audible_activation_bytes` and the card then disappeared (throwaway value
-   removed afterwards). The login path remains the documented stub from step 2
-   (the sidecar returns a clear "not available" error). vet/gofmt/golangci-lint
-   clean, JS syntax-checked, full suite green.
+   removed afterwards). At this point the login path was still the stub from
+   step 2; step 11 makes it work. vet/gofmt/golangci-lint clean, JS
+   syntax-checked, full suite green.
 8. (DONE) Player. `/read/{slug}` now dispatches `format=audio` to a new
    `audio.html` + `audio.js` (the 501 placeholder from step 5 is gone). It uses
    the browser's native `<audio controls>` for transport and adds: a chapter
@@ -461,6 +463,25 @@ to open there).
     user has only `.aax` test files, no `.aaxc`/voucher), the one path not
     exercisable here. vet/gofmt/golangci-lint clean, Python compiles, full suite
     green.
+11. (DONE) **Audible login retrieval (stub -> working).** The login *form*
+    already shipped in step 7; this step made the sidecar's `setup_login`
+    actually work. It uses the maintained `audible` library (mkb79, pinned
+    `==0.8.2`): `Authenticator.from_login(email, password, marketplace)` then
+    `get_activation_bytes(extract=True)`, NO browser and NO Selenium (pure HTTP +
+    crypto), so the "always running, lazy browser" promise (§0) is kept by the
+    library needing no browser at all; it is lazy-IMPORTED inside `setup_login`
+    so a dep issue can't break decrypt/health. On success the 8 hex bytes are
+    stored via the same `_store_bytes` as paste, so the rest of the pipeline is
+    unchanged. Challenge handling is intentionally minimal (decided with the
+    user): the CAPTCHA/OTP/CVF/approval callbacks all refuse, so if Amazon
+    demands one the login aborts with a clear "use paste instead" error rather
+    than hanging. The form gained a marketplace selector (us/uk/de/... ), passed
+    through `SetupLogin(ctx, mail, pw, marketplace)` -> sidecar. Verified in the
+    real sidecar image (audible 0.8.2 imports; a junk-credential login reached
+    Amazon, hit a real CAPTCHA challenge, and returned the clean paste-fallback
+    error). A real SUCCESSFUL login needs the user's actual Amazon credentials,
+    not exercised here. DEPLOY/README updated to mark login working. vet/gofmt/
+    golangci-lint clean, Python compiles, full suite green.
 
 ## 9. Risks / notes
 

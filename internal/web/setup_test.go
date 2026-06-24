@@ -104,8 +104,9 @@ func TestApiSetupAudiobookLogin(t *testing.T) {
 		if _, ok := req["mail"]; ok {
 			gotMode = "login"
 		}
-		// A build without Selenium returns an error; the handler must propagate it.
-		return 500, `{"ok":false,"error":"login retrieval is not available in this build"}`
+		// Login can fail (e.g. Amazon demands a CAPTCHA/2FA); the handler must
+		// propagate the sidecar's error as a 502.
+		return 500, `{"ok":false,"error":"Audible login failed: bad credentials"}`
 	})
 
 	form := url.Values{"mode": {"login"}, "mail": {"a@b.c"}, "password": {"pw"}}

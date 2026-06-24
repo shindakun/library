@@ -112,19 +112,23 @@ func TestSetupBytesRejected(t *testing.T) {
 }
 
 func TestSetupLoginSendsCreds(t *testing.T) {
-	var gotMail string
+	var gotMail, gotMarket string
 	c := mockSidecar(t, "", nil, func(req map[string]any, w http.ResponseWriter) {
 		gotMail, _ = req["mail"].(string)
-		// A build without Selenium returns an error; the client must propagate it.
+		gotMarket, _ = req["marketplace"].(string)
+		// Login can still fail (e.g. CAPTCHA/2FA); the client must propagate it.
 		w.WriteHeader(500)
-		_, _ = w.Write([]byte(`{"ok":false,"error":"login retrieval is not available in this build"}`))
+		_, _ = w.Write([]byte(`{"ok":false,"error":"Audible asked for a CAPTCHA or 2FA/OTP code"}`))
 	})
-	err := c.SetupLogin(context.Background(), "a@b.c", "pw")
-	if err == nil || !contains(err.Error(), "not available") {
+	err := c.SetupLogin(context.Background(), "a@b.c", "pw", "uk")
+	if err == nil || !contains(err.Error(), "CAPTCHA") {
 		t.Errorf("login error = %v, want it to propagate the sidecar message", err)
 	}
 	if gotMail != "a@b.c" {
 		t.Errorf("sidecar received mail %q, want a@b.c", gotMail)
+	}
+	if gotMarket != "uk" {
+		t.Errorf("sidecar received marketplace %q, want uk", gotMarket)
 	}
 }
 

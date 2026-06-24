@@ -446,7 +446,8 @@ func (s *Server) apiSetupAudiobook(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Audible email and password are required for login retrieval", http.StatusBadRequest)
 			return
 		}
-		err = s.Audible.SetupLogin(r.Context(), mail, password)
+		// marketplace is the account region (us/uk/de/...); empty defaults to us.
+		err = s.Audible.SetupLogin(r.Context(), mail, password, r.FormValue("marketplace"))
 	default: // "bytes" (paste) is the default and reliable path
 		bytesHex := strings.TrimSpace(r.FormValue("bytes"))
 		if bytesHex == "" {
