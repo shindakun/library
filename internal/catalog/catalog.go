@@ -510,9 +510,10 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 		// the skip flags further down).
 		var editedJSON string
 		var curTitle, curSortTitle, curLanguage, curPublisher, curDescription, curPublished string
+		var curNarrator sql.NullString
 		_ = tx.QueryRowContext(ctx,
-			`SELECT edited_fields, title, sort_title, language, publisher, description, published FROM books WHERE id=?`, existingID).
-			Scan(&editedJSON, &curTitle, &curSortTitle, &curLanguage, &curPublisher, &curDescription, &curPublished)
+			`SELECT edited_fields, title, sort_title, language, publisher, description, published, narrator FROM books WHERE id=?`, existingID).
+			Scan(&editedJSON, &curTitle, &curSortTitle, &curLanguage, &curPublisher, &curDescription, &curPublished, &curNarrator)
 		ed := editedSet(editedJSON)
 
 		{
@@ -554,7 +555,8 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 			keep(fieldPublisher, meta.Publisher, curPublisher),
 			keep(fieldDescription, meta.Description, curDescription),
 			keep(fieldPublished, meta.Published, curPublished),
-			size, hash, meta.HasCover, source, format, am.Narrator, am.Duration, existingID)
+			size, hash, meta.HasCover, source, format,
+			keep(fieldNarrator, am.Narrator, curNarrator.String), am.Duration, existingID)
 		if err != nil {
 			return 0, err
 		}

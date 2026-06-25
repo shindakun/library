@@ -55,11 +55,16 @@
         return resp.json();
       })
       .then(function (data) {
-        // The catalog edit is saved; the file embed runs in the background as a
-        // tracked job. Follow it over the import SSE stream so the bar fills.
-        say("Saved. Embedding into the file…", false);
-        if (data.jobId) {
+        // The catalog edit is saved. For file-backed formats (epub/comic) the
+        // change then embeds into the file as a background job we follow over the
+        // import SSE stream. Audiobooks are catalog-only (embeds=false): just
+        // confirm the save, no embed step.
+        if (data.embeds && data.jobId) {
+          say("Saved. Embedding into the file…", false);
           watchEmbed(data.jobId); // re-enables Save when the embed job ends
+        } else if (data.embeds === false) {
+          say("Saved to the library. The original file is not modified (for now).", false);
+          setSaving(false);
         } else {
           say("Saved.", false);
           setSaving(false);

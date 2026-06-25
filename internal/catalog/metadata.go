@@ -31,6 +31,7 @@ const (
 	fieldSeries      = "series"
 	fieldTags        = "tags"
 	fieldIdentifiers = "identifiers"
+	fieldNarrator    = "narrator" // audiobook-only
 )
 
 // maxFieldLen bounds any single edited string so a hostile or accidental
@@ -51,6 +52,7 @@ type Edits struct {
 	Published   *string
 	Tags        *[]string
 	Identifiers *map[string]string
+	Narrator    *string // audiobook-only; ignored for other formats
 }
 
 // sanitizeField trims, strips control characters, and length-bounds a single
@@ -201,6 +203,13 @@ func (c *Catalog) UpdateMetadata(ctx context.Context, slug string, e Edits) (*Bo
 			return nil, err
 		}
 		b.Published = v
+	}
+	if e.Narrator != nil {
+		v := sanitizeField(*e.Narrator)
+		if err := set("narrator", fieldNarrator, v); err != nil {
+			return nil, err
+		}
+		b.Narrator = v
 	}
 
 	if e.Authors != nil {
@@ -372,7 +381,7 @@ func (c *Catalog) EmbedMetadata(ctx context.Context, slug string, onProgress fun
 	// Refuse here rather than fall through to the epub writer, which would
 	// corrupt the file.
 	if b.Format == "audio" {
-		return EmbedResult{Reason: "audiobook metadata is not embedded into the file"}, nil
+		return EmbedResult{Reason: "audiobook files are not rewritten (catalog-only edit)"}, nil
 	}
 
 	ext := filepath.Ext(b.Path)

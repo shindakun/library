@@ -126,3 +126,56 @@ func TestAudiobookEmbedRefused(t *testing.T) {
 		t.Error("expected a reason explaining why the audiobook edit was not embedded")
 	}
 }
+
+// TestAudiobookNarratorEditPersistsAndSurvivesRescan verifies the audiobook
+// Narrator is editable, the edit lands in the catalog, and a later re-index of
+// the same file does NOT clobber the edited narrator with the file's original
+// (the keep(fieldNarrator,...) guard in the rescan path).
+func TestAudiobookNarratorEditPersistsAndSurvivesRescan(t *testing.T) {
+	dir := t.TempDir()
+	library := filepath.Join(dir, "library")
+	if err := os.MkdirAll(library, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Open(filepath.Join(dir, "catalog.db"), library, filepath.Join(dir, "covers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+
+	p := makeM4B(t, library, "book.m4b") // narrator = "The Narrator"
+	if _, err := c.Index(context.Background(), p, "scan"); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := c.List(context.Background(), ListOptions{})
+	slug := books[0].Slug()
+	if books[0].Narrator != "The Narrator" {
+		t.Fatalf("indexed narrator = %q, want The Narrator", books[0].Narrator)
+	}
+
+	// Edit the narrator.
+	edited := "Edited Narrator"
+	if _, err := c.UpdateMetadata(context.Background(), slug, Edits{Narrator: &edited}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetBySlug(context.Background(), slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Narrator != edited {
+		t.Errorf("after edit, narrator = %q, want %q", got.Narrator, edited)
+	}
+
+	// Re-index the same file: the file still says "The Narrator", but the edited
+	// value must be preserved.
+	if _, err := c.Index(context.Background(), p, "scan"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = c.GetBySlug(context.Background(), slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Narrator != edited {
+		t.Errorf("after rescan, narrator = %q, want it preserved as %q", got.Narrator, edited)
+	}
+}

@@ -36,6 +36,20 @@
     <label>Authors <span class="muted">(comma-separated)</span>
       <input type="text" name="authors" value="{{.Authors}}">
     </label>
+    {{if eq .Book.Format "audio"}}
+    <label>Narrator
+      <input type="text" name="narrator" value="{{.Book.Narrator}}">
+    </label>
+    <label>Publisher
+      <input type="text" name="publisher" value="{{.Book.Publisher}}">
+    </label>
+    <label>Published
+      <input type="text" name="published" value="{{.Book.Published}}">
+    </label>
+    <label>Description
+      <textarea name="description" rows="5">{{.Book.Description}}</textarea>
+    </label>
+    {{else}}
     <label>Series
       <input type="text" name="series" value="{{.Book.Series}}">
     </label>
@@ -54,14 +68,22 @@
     <label>Description
       <textarea name="description" rows="5">{{.Book.Description}}</textarea>
     </label>
+    {{end}}
     <div class="edit-actions">
       <button type="submit">Save</button>
       <a class="cancel" href="/">Cancel</a>
       <span id="edit-status" class="edit-status"></span>
     </div>
     <progress id="embed-bar" class="embed-bar" max="1" hidden></progress>
+    {{if eq .Book.Format "audio"}}
+    <p class="hint"><strong>Note:</strong> changes are saved to the library
+    catalog only. For now, the original <code>.m4b</code> file is not modified,
+    its embedded tags keep their original values, so the file itself will not
+    reflect these edits if opened elsewhere.</p>
+    {{else}}
     <p class="hint">Saving writes the change instantly; embedding it into the file
     then runs in the background. Large files (big comics) can take a little while.</p>
+    {{end}}
   </form>
 
   <!-- Cover override: uploads independently of the metadata form. -->

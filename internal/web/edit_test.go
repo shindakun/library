@@ -132,6 +132,56 @@ func TestEditUpdatesDBAndEmbedsFile(t *testing.T) {
 	}
 }
 
+// TestEditAudiobookFormAndNarrator covers the tailored audiobook edit path: the
+// edit form renders a Narrator field (and not Series #), and a narrator edit
+// round-trips through the handler with NO embed job (audio is catalog-only).
+func TestEditAudiobookFormAndNarrator(t *testing.T) {
+	s, _ := newTestServer(t)
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	slug := indexM4B(t, s) // narrator "The Narrator"
+
+	// The edit FORM is audio-tailored.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/book/"+slug+"/edit", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/edit status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="narrator"`) {
+		t.Error("audio edit form should have a Narrator field")
+	}
+	if strings.Contains(body, `name="seriesIndex"`) {
+		t.Error("audio edit form should NOT have a Series # field")
+	}
+
+	// A narrator edit round-trips with no embed job.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/books/"+slug, strings.NewReader(`{"narrator":"New Voice"}`))
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		JobID  string `json:"jobId"`
+		Embeds bool   `json:"embeds"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Embeds {
+		t.Error("audiobook edit should report embeds=false")
+	}
+	if resp.JobID != "" {
+		t.Error("audiobook edit should not start an embed job")
+	}
+	got, _ := s.Cat.GetBySlug(context.Background(), slug)
+	if got.Narrator != "New Voice" {
+		t.Errorf("narrator not updated: %q, want New Voice", got.Narrator)
+	}
+}
+
 // TestEditMissingBookIs404 confirms an unknown slug is a clean 404.
 func TestEditMissingBookIs404(t *testing.T) {
 	s, _ := newTestServer(t)
