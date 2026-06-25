@@ -26,7 +26,10 @@
       // warm, or any future theme, with no per-theme duplication here. Applied
       // before first paint so the book renders correct the first time.
       applyReaderTheme();
-      return rendition.display();
+      // Resume at the saved CFI if there is one; an empty/absent value makes
+      // epub.js open at the start (its display() treats undefined as "begin").
+      const startCFI = window.START_CFI || undefined;
+      return rendition.display(startCFI);
     })
     .then(() => {
       // Persist reading position to the catalog.

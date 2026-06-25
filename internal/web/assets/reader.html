@@ -14,6 +14,8 @@
     if (saved) document.documentElement.setAttribute("data-theme", saved);
   })();
   window.BOOK_SLUG = "{{.Book.Slug}}";
+  // Saved EPUB CFI to resume at (empty = start). html/template JS-escapes it.
+  window.START_CFI = "{{.StartCFI}}";
 </script>
 <script src="/static/js/app.js" defer></script>
 </head>
