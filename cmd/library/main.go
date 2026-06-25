@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/steve/library/internal/audible"
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/drm"
 	"github.com/steve/library/internal/ingest"
@@ -28,13 +29,20 @@ var version = "dev"
 
 func main() {
 	var (
-		addr        = flag.String("addr", env("LIBRARY_ADDR", ":8080"), "listen address")
-		dataDir     = flag.String("data", env("LIBRARY_DATA", "./data"), "data directory (books, import, catalog.db)")
-		baseURL     = flag.String("base-url", env("LIBRARY_BASE_URL", "http://localhost:8080"), "absolute base URL the X4 uses to reach this server")
-		sidecarURL  = flag.String("sidecar", env("DRM_SIDECAR_URL", "http://localhost:7000"), "DRM sidecar worker URL")
-		scanOnBoot  = flag.Bool("scan", true, "scan the books dir for new files on startup")
-		reorganize  = flag.Bool("reorganize", false, "move existing books into Author/Title.epub layout on startup, then continue")
-		showVersion = flag.Bool("version", false, "print version and exit")
+		addr    = flag.String("addr", env("LIBRARY_ADDR", ":8080"), "listen address")
+		dataDir = flag.String("data", env("LIBRARY_DATA", "./data"), "data directory (books, import, catalog.db)")
+		baseURL = flag.String("base-url", env("LIBRARY_BASE_URL", "http://localhost:8080"), "absolute base URL the X4 uses to reach this server")
+		// EBOOK_SIDECAR_URL is the ebook DRM sidecar (renamed from DRM_SIDECAR_URL,
+		// which is still honored as a fallback for existing deploys). Empty
+		// disables ebook DRM (no-sidecar mode).
+		sidecarURL = flag.String("sidecar", env("EBOOK_SIDECAR_URL", env("DRM_SIDECAR_URL", "http://localhost:7000")), "ebook DRM sidecar worker URL")
+		// AUDIOBOOK_SIDECAR_URL is the audiobook DRM sidecar (.aax -> .m4b via
+		// ffmpeg). Empty disables audiobook import (no-sidecar mode), independently
+		// of the ebook sidecar.
+		audiobookURL = flag.String("audiobook-sidecar", env("AUDIOBOOK_SIDECAR_URL", "http://localhost:7100"), "audiobook DRM sidecar worker URL")
+		scanOnBoot   = flag.Bool("scan", true, "scan the books dir for new files on startup")
+		reorganize   = flag.Bool("reorganize", false, "move existing books into Author/Title.epub layout on startup, then continue")
+		showVersion  = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
 
@@ -96,11 +104,24 @@ func main() {
 		log.Printf("DRM sidecar disabled (-sidecar empty): comics and DRM-free epubs import; .acsm / encrypted epub will be rejected")
 	}
 
+	// Audiobook sidecar client: drives the .aax -> .m4b decrypt. Independent of
+	// the ebook sidecar (the "one / other / both / none" design): an empty
+	// -audiobook-sidecar URL disables audiobook import entirely, so .aax files are
+	// rejected with a clear reason while everything else imports normally.
+	var audibleClient *audible.Client
+	audiobookEnabled := strings.TrimSpace(*audiobookURL) != ""
+	if audiobookEnabled {
+		audibleClient = audible.New(*audiobookURL)
+	} else {
+		log.Printf("audiobook sidecar disabled (-audiobook-sidecar empty): .aax will be rejected")
+	}
+
 	// Importer is created before the web server so its job registry can back the
 	// /imports page + SSE stream.
 	importer := &ingest.Importer{
 		Cat:        cat,
 		DRM:        drmClient,
+		Audible:    audibleClient,
 		ImportDir:  importDir,
 		LibraryDir: libraryDir,
 		// The sidecar sees the shared volume at SIDECAR_DATA (default /data); the
@@ -110,7 +131,7 @@ func main() {
 		SidecarPath: pathMapper(*dataDir, env("SIDECAR_DATA", "/data")),
 	}
 
-	websrv, err := web.New(cat, importDir, drmClient, importer.JobRegistry())
+	websrv, err := web.New(cat, importDir, drmClient, audibleClient, importer.JobRegistry())
 	if err != nil {
 		log.Fatalf("web: %v", err)
 	}
@@ -130,6 +151,21 @@ func main() {
 				log.Printf("drm sidecar not ready (%v); DRM imports (.acsm / ADEPT .epub) will fail until it is, but comics and DRM-free epubs import fine", err)
 			} else {
 				log.Printf("drm sidecar healthy at %s", *sidecarURL)
+			}
+		}()
+	}
+	if audiobookEnabled {
+		go func() {
+			hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			// Health() succeeds even before activation bytes are set; Configured()
+			// distinguishes "up but needs setup" from "up and ready".
+			if err := audibleClient.Health(hctx); err != nil {
+				log.Printf("audiobook sidecar not ready (%v); .aax import will fail until it is", err)
+			} else if ok, _ := audibleClient.Configured(hctx); !ok {
+				log.Printf("audiobook sidecar healthy at %s but needs setup (no activation bytes yet); .aax import will fail until set", *audiobookURL)
+			} else {
+				log.Printf("audiobook sidecar healthy at %s", *audiobookURL)
 			}
 		}()
 	}

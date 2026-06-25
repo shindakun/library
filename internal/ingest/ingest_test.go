@@ -12,7 +12,7 @@ import (
 )
 
 func TestImportable(t *testing.T) {
-	yes := []string{"book.acsm", "book.epub", "BOOK.EPUB", "x.AcSm", "a.b.epub", "comic.cbz", "C.CBZ", "comic.cbr", "X.CBR"}
+	yes := []string{"book.acsm", "book.epub", "BOOK.EPUB", "x.AcSm", "a.b.epub", "comic.cbz", "C.CBZ", "comic.cbr", "X.CBR", "audiobook.aax", "A.AAX"}
 	no := []string{
 		"book.pdf", "book.txt", "book", "cover.jpg", ".epubx", "epub",
 		// Hidden/temp upload stages share an importable extension but must be
@@ -47,6 +47,9 @@ func TestSourceFor(t *testing.T) {
 	}
 	if got := sourceFor("x.cbr"); got != "comic-import" {
 		t.Errorf("sourceFor(.cbr) = %q, want comic-import", got)
+	}
+	if got := sourceFor("x.aax"); got != "audible-import" {
+		t.Errorf("sourceFor(.aax) = %q, want audible-import", got)
 	}
 }
 

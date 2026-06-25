@@ -115,6 +115,92 @@ function syncViewButton() {
     document.body.getAttribute("data-view") === "table" ? "Grid" : "Table";
 }
 
+// --- Audiobook setup mode toggle (first-run form) ---
+// Switches the audiobook DRM section between paste-bytes and Audible-login,
+// showing one form and its active tab at a time.
+function audMode(mode) {
+  const bytes = mode === "bytes";
+  const bf = document.getElementById("aud-bytes-form");
+  const lf = document.getElementById("aud-login-form");
+  if (bf) bf.style.display = bytes ? "" : "none";
+  if (lf) lf.style.display = bytes ? "none" : "";
+  const bt = document.getElementById("aud-tab-bytes");
+  const lt = document.getElementById("aud-tab-login");
+  if (bt) bt.classList.toggle("active", bytes);
+  if (lt) lt.classList.toggle("active", !bytes);
+}
+
+// --- Audible login (two-step: password, then 2FA/OTP) ---
+// from_login can't be completed in one request when the account has 2FA: the
+// one-time code doesn't exist until the password step triggers it. So step 1
+// posts the credentials; if the sidecar replies otp_required it parks the login
+// and returns a login_id, and we reveal the OTP form. Step 2 posts login_id +
+// code to finish. On success the page reloads (the setup card then disappears).
+let audLoginId = "";
+
+function audStatus(msg, isError) {
+  const el = document.getElementById("aud-login-status");
+  if (!el) return;
+  el.style.display = msg ? "" : "none";
+  el.textContent = msg || "";
+  el.style.color = isError ? "var(--danger, #c0392b)" : "var(--faint)";
+}
+
+function audPostSetup(form) {
+  return fetch("/api/setup/audiobook", {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: new URLSearchParams(new FormData(form)),
+  }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+}
+
+function audLogin(ev) {
+  ev.preventDefault();
+  audStatus("Logging in to Audible...", false);
+  audPostSetup(ev.target).then(function (res) {
+    if (res.j && res.j.configured) { location.reload(); return; }
+    if (res.j && res.j.otp_required) {
+      audLoginId = res.j.login_id || "";
+      const otpForm = document.getElementById("aud-otp-form");
+      const msg = document.getElementById("aud-otp-msg");
+      if (msg && res.j.message) msg.textContent = res.j.message;
+      // Switch fully into the OTP step: hide the email/password form, the
+      // paste-bytes form, and the paste/login tabs so only the OTP entry shows.
+      ev.target.style.display = "none";
+      const tabs = document.querySelector(".setup-tabs");
+      if (tabs) tabs.style.display = "none";
+      const bytesForm = document.getElementById("aud-bytes-form");
+      if (bytesForm) bytesForm.style.display = "none";
+      if (otpForm) otpForm.style.display = "";
+      audStatus("", false);
+      const otpInput = otpForm && otpForm.querySelector('input[name="otp"]');
+      if (otpInput) otpInput.focus();
+      return;
+    }
+    audStatus((res.j && res.j.error) || "Login failed; use paste instead.", true);
+  }).catch(function () { audStatus("Login request failed; use paste instead.", true); });
+  return false;
+}
+
+function audOtp(ev) {
+  ev.preventDefault();
+  audStatus("Submitting code...", false);
+  const form = ev.target;
+  const body = new URLSearchParams(new FormData(form));
+  body.set("mode", "otp");
+  body.set("login_id", audLoginId);
+  fetch("/api/setup/audiobook", {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: body,
+  }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (res.j && res.j.configured) { location.reload(); return; }
+      audStatus((res.j && res.j.error) || "Code rejected; try again or use paste.", true);
+    }).catch(function () { audStatus("Code submission failed; use paste instead.", true); });
+  return false;
+}
+
 // --- Client-side column sort (index table) ---
 // The whole library is on the page, so sorting is a DOM reorder, no server
 // round-trip. Sort keys live in each row's data-* attributes.

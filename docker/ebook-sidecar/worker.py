@@ -262,5 +262,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs(WORK, exist_ok=True)
-    print(f"drm-sidecar listening on :{PORT} (secrets={SECRETS}, work={WORK})", flush=True)
+    print(f"ebook-sidecar listening on :{PORT} (secrets={SECRETS}, work={WORK})", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

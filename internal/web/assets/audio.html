@@ -1,0 +1,49 @@
+{{define "audio.html"}}<!doctype html>
+<html lang="en" class="reader">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Book.Title}}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script>
+  // Pre-paint theme apply (inline so there is no flash before app.js loads).
+  (function () {
+    const saved = localStorage.getItem("theme");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
+  })();
+  window.BOOK_SLUG = "{{.Book.Slug}}";
+  window.START_SECONDS = {{.StartSeconds}};
+</script>
+<script src="/static/js/app.js" defer></script>
+</head>
+<body class="reader audio">
+<div id="bar">
+  <a href="/">&larr; Library</a>
+  <strong>{{.Book.Title}}</strong>
+  <span id="now-chapter" class="page-indicator"></span>
+  <span style="margin-left:auto"></span>
+  <button id="theme-btn" type="button" title="Theme" aria-label="Theme">🌙</button>
+</div>
+
+<div id="viewer" class="audio-viewer">
+  <div class="audio-meta">
+    <span class="cover" {{if .Book.HasCover}}style="background-image:url('/book/{{.Book.Slug}}/cover')"{{end}}></span>
+    <div class="audio-titles">
+      <div class="audio-title">{{.Book.Title}}</div>
+      <div class="audio-by">{{range $i,$a := .Book.Authors}}{{if $i}}, {{end}}{{$a}}{{end}}</div>
+      {{if .Book.Narrator}}<div class="audio-narrator">Narrated by {{.Book.Narrator}}</div>{{end}}
+    </div>
+  </div>
+
+  <div class="audio-controls">
+    <button type="button" onclick="audioSkip(-30)" title="Back 30 seconds">&minus;30s</button>
+    <audio id="player" controls preload="metadata" src="/book/{{.Book.Slug}}/audio"></audio>
+    <button type="button" onclick="audioSkip(30)" title="Forward 30 seconds">+30s</button>
+  </div>
+
+  <ol id="chapters" class="chapters"></ol>
+</div>
+
+<script src="/static/js/audio.js"></script>
+</body>
+</html>{{end}}

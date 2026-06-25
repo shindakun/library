@@ -21,16 +21,27 @@ including [docs/proposals/](docs/proposals/) for designed-but-unbuilt features.
   reader (epub.js for books, a built-in image-sequence viewer for comics), OPDS
   1.2 feed, import watcher (the `ingest` package), upload endpoint. Never imports
   Python.
-- **`drm-sidecar`** (optional): quarantined Python worker. Runs
+- **`ebook-sidecar`** (optional): quarantined Python worker. Runs
   `acsm-calibre-plugin` (fulfillment) + DeDRM's `ineptepub` (decryption). Reads
   `/secrets` for the Adobe activation + key, and writes it only during first-run
   setup.
+- **`audiobook-sidecar`** (optional): quarantined ffmpeg worker that removes
+  Audible DRM, copying the audio + chapters losslessly to a clean `.m4b`. A
+  `.aax` is decoded with the account activation bytes (held in `/secrets`); the
+  newer `.aaxc` is decoded with a per-file key/IV read from a sibling
+  `<name>.voucher` JSON dropped beside it (no account secret needed). Setup
+  stores pasted activation bytes (`make audiobook-setup BYTES=...`, or the web
+  form). Imported audiobooks get a browser player (chapters, resume, +/-30s) and
+  their own OPDS feed; see
+  [docs/proposals/AUDIOBOOK_SUPPORT.md](docs/proposals/AUDIOBOOK_SUPPORT.md).
 
-The sidecar is **only** needed for legacy-DRM content: `.acsm` loans and
-ADEPT-encrypted `.epub`. If you have none, run **without it**: set `-sidecar=""`
-(or `DRM_SIDECAR_URL=""`). Then the first-run Adobe setup form is hidden, no
-sidecar is probed, and comics (`.cbz`/`.cbr`) and DRM-free epubs import normally;
-a `.acsm`/encrypted `.epub` is rejected into `import/failed/` with a clear reason.
+Each sidecar is **only** needed for its DRM'd content and is independently
+optional: the ebook sidecar for `.acsm` loans and ADEPT-encrypted `.epub`, the
+audiobook sidecar for `.aax`. Run with one, the other, both, or neither. With a
+sidecar disabled (empty `EBOOK_SIDECAR_URL` / `AUDIOBOOK_SIDECAR_URL`), its setup
+form is hidden, it is not probed, and its DRM'd inputs are rejected into
+`import/failed/` with a clear reason; comics (`.cbz`/`.cbr`) and DRM-free epubs
+always import without any sidecar.
 
 Any OPDS client points at `http://<host>:8080/opds` to browse and download over
 WiFi (the Xteink X4 is the verified test device, but it is standard OPDS 1.2).
@@ -53,11 +64,11 @@ internal/fileutil/   small shared filesystem helpers
 docker/              container stack (compose + Dockerfiles)
   docker-compose.yml two-service stack; paths are relative to docker/
   Dockerfile         Go service image (distroless, ~30 MB)
-  sidecar/           Python DRM worker (worker.py) + CLI setup (setup.py)
+  ebook-sidecar/     Python ebook-DRM worker (worker.py) + CLI setup (setup.py)
 data/library/        clean EPUBs + CBZ comics (the library); sorted by author then title
 data/covers/         extracted cover-image cache, keyed by slug (derived, safe to wipe)
   covers/overrides/  user-uploaded cover overrides, keyed by slug (authoritative)
-data/import/         drop or upload .acsm / .epub / .cbz / .cbr here -> pipeline -> library
+data/import/         drop or upload .acsm/.epub/.cbz/.cbr/.aax (.aaxc+.voucher: drop only) -> pipeline -> library
   import/work/       sidecar + CBR-convert scratch (NOT watched)
   import/done/       originals archived here on success
   import/failed/     originals here on failure, with a .log sibling
@@ -78,7 +89,8 @@ make lint            # golangci-lint
 make hooks           # install the git pre-commit hook (gofmt/vet/lint/markdownlint)
 
 # Run the local stack (dev: builds images, macOS/Podman)
-make drm-setup       # ONE-TIME: authorize Adobe + export key into ./secrets (or use the web form)
+make ebook-setup     # ONE-TIME: authorize Adobe + export key into ./secrets (or use the web form)
+make audiobook-setup BYTES=...  # ONE-TIME: store Audible activation bytes (or use the web form)
 make up              # build images + start the stack (LAN IP auto-detected)
 make ps              # stack status
 make logs            # follow logs
@@ -126,7 +138,7 @@ Three Podman realities are baked into `docker/docker-compose.yml`:
    UID the others can't touch, breaking the import pipeline. `keep-id` maps your
    host UID straight through so all three agree on ownership.
 2. **Explicit `libnet` bridge network** so `aardvark-dns` resolves the service
-   name `drm-sidecar` reliably (some rootless default-network combos have flaky
+   name `ebook-sidecar` reliably (some rootless default-network combos have flaky
    DNS).
 3. **SELinux relabel suffixes** `:z` (shared) / `:Z` (private) on bind mounts, for
    Fedora/RHEL hosts. Harmless no-ops on non-SELinux systems.
@@ -153,7 +165,8 @@ rm`, so re-run it after recreating the machine).
 Three ways in; all converge on the same pipeline and catalog:
 
 - **Upload via the web UI**: the dedicated import page (`/imports`, linked from
-  the library header) accepts `.acsm`, `.epub`, `.cbz`, or `.cbr`, and shows
+  the library header) accepts `.acsm`, `.epub`, `.cbz`, `.cbr`, or `.aax`
+  (an `.aaxc` needs its `.voucher` sibling, so it is drop-in only), and shows
   live per-file progress over SSE. The file is staged atomically into
   `data/import/`.
 - **Drop a file** into `data/import/` directly.
@@ -227,8 +240,8 @@ Working and verified end-to-end via the compose stack:
   (verified on a real 743 MB / 366-page CBR: lossless, correctly ordered); comics
   catalog with covers, read in a built-in image-sequence viewer, and serve over
   OPDS with the comic media type.
-- **Web upload**: `.acsm`/`.epub`/`.cbz`/`.cbr` upload routes through the same
-  pipeline, with live per-file progress on the `/imports` page (SSE).
+- **Web upload**: `.acsm`/`.epub`/`.cbz`/`.cbr`/`.aax` upload routes through the
+  same pipeline, with live per-file progress on the `/imports` page (SSE).
 - **Browser UI**: grid + sortable table views (persisted), dark mode, clickable
   author search; covers cached to `data/covers` for fast grid loads. Each book
   has a three-dot menu with **Edit** and **Delete**.
@@ -260,6 +273,15 @@ Working and verified end-to-end via the compose stack:
 
 Built but not yet verified against a real run:
 
-- **Web first-run setup**: the form + sidecar `/setup` are wired and render
-  correctly, but the Adobe registration path has not been exercised end-to-end
-  (the CLI `setup.py` path is the proven one).
+- **Web first-run setup (Adobe/ebook)**: the form + sidecar `/setup` are wired
+  and render correctly, but the Adobe registration path has not been exercised
+  end-to-end (the CLI `setup.py` path is the proven one). The **audiobook**
+  setup card (paste activation bytes) HAS been verified end-to-end against the
+  live stack: a paste-bytes POST wrote `secrets/audible_activation_bytes` and the
+  card then disappeared. The audiobook **login** mode (Amazon email/password ->
+  `audible` library -> activation bytes, no browser; two-step for 2FA accounts,
+  the form prompts for the OTP code) is implemented; it is best-effort, a CAPTCHA
+  always fails and the form says so. Verified mechanically (the two-step OTP
+  threading bridge end to end against the worker; a junk login hit a real Amazon
+  CAPTCHA and returned the clean paste-fallback error); a real successful login
+  needs real credentials + a live OTP and is unverified.

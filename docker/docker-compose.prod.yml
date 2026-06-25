@@ -21,17 +21,19 @@ services:
     environment:
       LIBRARY_DATA: /data
       LIBRARY_BASE_URL: ${LIBRARY_BASE_URL:-http://localhost:8080}
-      DRM_SIDECAR_URL: http://drm-sidecar:7000
+      EBOOK_SIDECAR_URL: http://ebook-sidecar:7000
+      AUDIOBOOK_SIDECAR_URL: http://audiobook-sidecar:7100
     volumes:
       - ./data:/data
     networks:
       - libnet
     depends_on:
-      - drm-sidecar
+      - ebook-sidecar
+      - audiobook-sidecar
     restart: unless-stopped
 
-  drm-sidecar:
-    image: ${REGISTRY:-ghcr.io/shindakun/library}/sidecar:${TAG:-latest}
+  ebook-sidecar:
+    image: ${REGISTRY:-ghcr.io/shindakun/library}/ebook-sidecar:${TAG:-latest}
     environment:
       SECRETS_DIR: /secrets
       WORK_DIR: /data/import/work
@@ -39,6 +41,20 @@ services:
       # Writable so the web first-run setup form can populate /secrets. After
       # setup it is only read by fulfill/decrypt. (CLI setup works either way.)
       - ./secrets:/secrets
+      - ./data:/data
+    networks:
+      - libnet
+    restart: unless-stopped
+
+  # Audiobook DRM (Audible .aax -> clean .m4b via ffmpeg). Optional: unset
+  # AUDIOBOOK_SIDECAR_URL on the server to disable.
+  audiobook-sidecar:
+    image: ${REGISTRY:-ghcr.io/shindakun/library}/audiobook-sidecar:${TAG:-latest}
+    environment:
+      SECRETS_DIR: /secrets
+      WORK_DIR: /data/import/work
+    volumes:
+      - ./secrets:/secrets       # holds audible_activation_bytes; writable for setup
       - ./data:/data
     networks:
       - libnet

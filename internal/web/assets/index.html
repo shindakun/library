@@ -19,37 +19,89 @@
 <body>
 <header>
   <h1>Library</h1>
-  {{if not .NeedsSetup}}
   <a class="nav-import" href="/imports">Import</a>
   <form class="search" method="get" action="/">
     <input type="search" name="q" placeholder="Search title, author…" value="{{.Query}}">
   </form>
   <button id="view-btn" class="view-toggle" type="button" onclick="toggleView()" title="Toggle grid/table view">Table</button>
-  {{end}}
   <button id="theme-btn" class="theme-toggle" type="button" title="Theme" aria-label="Theme">🌙</button>
 </header>
-{{if .NeedsSetup}}
+{{if .Setup.Any}}
 <div class="setup">
   <h2>First-run setup</h2>
-  <p>Authorize an Adobe account to fulfill and decrypt DRMed books. Use a fresh
-  or throwaway AdobeID. This runs once; the form disappears after.</p>
-  <form method="post" action="/api/setup">
-    <label>AdobeID email<input type="email" name="mail" required autocomplete="username"></label>
-    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
-    <label>ADE version
-      <select name="ade_version">
-        <option value="1" selected>2.0 (recommended)</option>
-        <option value="2">3.0</option>
-      </select>
-    </label>
-    <button type="submit">Authorize</button>
-  </form>
-  <p class="hint">Sent over your LAN to the local sidecar; credentials are used
-  only to register with Adobe and are not stored (only the resulting activation
-  + key are kept). On a headless host you can instead run the CLI setup; see
-  docs/DEPLOY.md.</p>
+  {{if .Setup.Ebook}}
+  <div class="setup-card">
+    <h3>Ebook DRM (Adobe)</h3>
+    <p>Authorize an Adobe account to fulfill and decrypt DRMed books. Use a fresh
+    or throwaway AdobeID. This runs once; the section disappears after.</p>
+    <form method="post" action="/api/setup">
+      <label>AdobeID email<input type="email" name="mail" required autocomplete="username"></label>
+      <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+      <label>ADE version
+        <select name="ade_version">
+          <option value="1" selected>2.0 (recommended)</option>
+          <option value="2">3.0</option>
+        </select>
+      </label>
+      <button type="submit">Authorize</button>
+    </form>
+    <p class="hint">Sent over your LAN to the local sidecar; credentials are used
+    only to register with Adobe and are not stored (only the resulting activation
+    + key are kept). On a headless host you can instead run the CLI setup; see
+    docs/DEPLOY.md.</p>
+  </div>
+  {{end}}
+  {{if .Setup.Audiobook}}
+  <div class="setup-card">
+    <h3>Audiobook DRM (Audible)</h3>
+    <p>Store your Audible activation bytes so .aax audiobooks can be decrypted.
+    This runs once; the section disappears after.</p>
+    <div class="setup-tabs">
+      <button type="button" class="tab active" onclick="audMode('bytes')" id="aud-tab-bytes">Paste bytes</button>
+      <button type="button" class="tab" onclick="audMode('login')" id="aud-tab-login">Audible login</button>
+    </div>
+    <form method="post" action="/api/setup/audiobook" id="aud-bytes-form">
+      <input type="hidden" name="mode" value="bytes">
+      <label>Activation bytes<input type="text" name="bytes" required pattern="[0-9a-fA-F]{8}" maxlength="8"
+        placeholder="8 hex chars (e.g. 1a2b3c4d)" autocomplete="off"></label>
+      <button type="submit">Save bytes</button>
+    </form>
+    <form action="/api/setup/audiobook" id="aud-login-form" style="display:none" onsubmit="return audLogin(event)">
+      <input type="hidden" name="mode" value="login">
+      <label>Audible email<input type="email" name="mail" autocomplete="username"></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password"></label>
+      <label>Marketplace
+        <select name="marketplace">
+          <option value="us" selected>US</option>
+          <option value="uk">UK</option>
+          <option value="de">DE</option>
+          <option value="fr">FR</option>
+          <option value="ca">CA</option>
+          <option value="it">IT</option>
+          <option value="au">AU</option>
+          <option value="in">IN</option>
+          <option value="jp">JP</option>
+        </select>
+      </label>
+      <button type="submit">Retrieve &amp; save</button>
+    </form>
+    <form id="aud-otp-form" style="display:none" onsubmit="return audOtp(event)">
+      <p class="hint" id="aud-otp-msg">Audible sent a 2FA code. Enter it to finish.</p>
+      <label>2FA / OTP code<input type="text" name="otp" inputmode="numeric" autocomplete="one-time-code"></label>
+      <button type="submit">Submit code</button>
+    </form>
+    <p class="hint" id="aud-login-status" style="display:none"></p>
+    <p class="hint">Bytes are an account secret, sent over your LAN to the local
+    sidecar and stored only there. <strong>Pasting is the reliable path.</strong>
+    Login is best-effort, no promises: if Audible asks for a 2FA / OTP code we
+    can prompt for it (it might work), but a <strong>CAPTCHA can never be solved
+    here</strong>, that login will always fail. If login won't go through, get
+    your bytes with a tool like the <code>audible</code> Python CLI and paste
+    them. See docs/DEPLOY.md.</p>
+  </div>
+  {{end}}
 </div>
-{{else}}
+{{end}}
 {{if .Uploaded}}<div class="banner">Queued <strong>{{.Uploaded}}</strong> for import. It will appear below once fulfilled &amp; decrypted (refresh in a few seconds).</div>{{end}}
 {{if .Books}}
 <div class="grid">
@@ -109,8 +161,7 @@
   </table>
 </div>
 {{else}}
-<p class="empty">No books yet. Drop EPUBs in <code>data/library/</code> and run a scan, or import an <code>.acsm</code>/<code>.epub</code> via the Import button.</p>
-{{end}}
+<p class="empty">Nothing here yet. Drop EPUBs, comics, or audiobooks in <code>data/library/</code> and run a scan, or import an <code>.acsm</code>/<code>.epub</code>/<code>.cbz</code>/<code>.aax</code> via the Import button.</p>
 {{end}}
 </body>
 </html>{{end}}

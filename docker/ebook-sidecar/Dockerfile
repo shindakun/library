@@ -1,4 +1,4 @@
-# DRM sidecar: the quarantined Python corner. Runs the standalone
+# Ebook DRM sidecar: the quarantined Python corner. Runs the standalone
 # acsm-calibre-plugin scripts (fulfillment) + DeDRM's ineptepub (decryption).
 # No Calibre, no GUI, just lxml + pycryptodome (see docs/DESIGN.md §2.4 Strategy B).
 FROM python:3.12-slim

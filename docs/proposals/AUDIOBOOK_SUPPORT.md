@@ -12,6 +12,36 @@ This is a back-catalog tool for audiobooks the user already owns, exactly like
 the existing ADEPT path is for owned ebooks (see DESIGN.md). It is not a download
 or sharing mechanism.
 
+## 0. Decisions locked (read first)
+
+- **Sidecar naming (by content type):** the existing `drm-sidecar` is renamed
+  **`ebook-sidecar`**, and the new one is **`audiobook-sidecar`**. Both do DRM
+  removal, so "drm-sidecar" was ambiguous; content-type names read clearly in the
+  setup UI ("Ebook DRM" / "Audiobook DRM") and in compose/env. The env var
+  `DRM_SIDECAR_URL` becomes `EBOOK_SIDECAR_URL`; the new one is
+  `AUDIOBOOK_SIDECAR_URL`. (This rename is its own first build step; see §8.)
+- **Independent optionality (one / other / both / none):** each sidecar is
+  enabled by its own non-empty `*_SIDECAR_URL`, exactly like today's no-DRM mode.
+  The Go service holds two optional clients; any combination runs. With neither,
+  only comics + DRM-free epubs import.
+- **Startup setup, per sidecar:** the first-run page shows an **Ebook DRM** setup
+  section AND/OR an **Audiobook DRM** section, each appearing only if that sidecar
+  is present (enabled) but not yet configured. Generalizes today's single
+  AdobeID-only form. If a sidecar is disabled, its section never shows (mirrors
+  how the whole form is hidden in no-DRM mode).
+- **Audiobook setup offers BOTH paths:** Audible email/password (login retrieval
+  of activation bytes) OR pasting the 8-hex-char activation bytes directly. The
+  paste path keeps the feature usable if login breaks against an Audible change;
+  login is the no-prior-tooling path. (Implemented in step 11 with the `audible`
+  library, NO browser/Selenium; the original plan assumed Selenium, the
+  Selenium-specific notes below are superseded.)
+- **v1 = `.aax`.** `.aaxc` (voucher-key) is a fast-follow (§4.3).
+- **Sidecar lifecycle: always-running.** Sidecars start with the stack (not on
+  demand, which would need Docker-socket access from the Go service). The
+  audiobook sidecar idles as just the ffmpeg-capable server; login retrieval is
+  a pure HTTP/crypto call (the `audible` library), so no browser is ever spawned
+  (the original "lazy browser" concern went away with Selenium).
+
 ## 1. What an `.aax` is, and the one real wrinkle
 
 An `.aax` is a standard MP4/M4B container (`major_brand=aax`) holding an AAC
@@ -60,7 +90,7 @@ existing Adobe first-run setup:
   stored; only the resulting `activation_bytes` are kept (in `/secrets`, like the
   ADEPT key).
 - Selenium + a headless browser is a heavy, fragile dependency (a specific
-  Chromium/driver pairing). It must NOT be bolted onto the existing epub DRM
+  Chromium/driver pairing). It must NOT be bolted onto the existing ebook DRM
   sidecar, which is a carefully pinned acsm/DeDRM/oscrypto stack with no browser.
 
 There is also a **manual fallback**: a user who already knows their activation
@@ -74,13 +104,23 @@ Three options for where Audible decryption lives:
 
 | Option | Trade-off |
 | --- | --- |
-| Extend `drm-sidecar` | Pollutes the pinned epub stack with ffmpeg + Selenium + a browser; a Chromium update could break epub fulfillment. Rejected. |
-| **New `audible-sidecar` (RECOMMENDED)** | Independent container: ffmpeg + Selenium, its own `/secrets` slice, its own job contract. The epub sidecar is untouched. Clean blast radius, mirrors the existing "quarantine the messy part" pattern. |
+| Extend the ebook sidecar | Pollutes the pinned epub stack with ffmpeg + Selenium + a browser; a Chromium update could break epub fulfillment. Rejected. |
+| **New `audiobook-sidecar` (CHOSEN)** | Independent container: ffmpeg + Selenium, its own `/secrets` slice, its own job contract. The ebook sidecar is untouched. Clean blast radius, mirrors the existing "quarantine the messy part" pattern. |
 | Do it in the Go service | The Go service must never import Python or shell heavy/fragile tooling; ffmpeg-as-subprocess is plausible but Selenium is not, and keeping all DRM in sidecars is the established boundary. Rejected. |
 
-**Decision: a second sidecar, `audible-sidecar`.** It is the audiobook analog of
-`drm-sidecar`: optional (only present if the user wants audiobooks), quarantined,
-and the only component that touches the Audible activation bytes.
+**Decision: a second sidecar, `audiobook-sidecar`** (the existing one becomes
+`ebook-sidecar`, see §0). It is the audiobook analog of the ebook sidecar:
+optional (only present if the user wants audiobooks), quarantined, and the only
+component that touches the Audible activation bytes.
+
+**Go-side client reuse (gap found in the code):** `internal/drm.Client` is mostly
+generic, its HTTP transport (`do`, `health`, the `/job` `{op}` contract) is
+format-neutral, but `Setup(mail, password, adeVersion)` and `Configured` are
+Adobe-specific. So the audiobook side gets its own small client (e.g.
+`internal/audible.Client`) that reuses the same job/health shape but has a
+different `Setup` (login OR paste-bytes) and `Configured` semantic. Do NOT try to
+force one `drm.Client` to serve both; the setup payloads genuinely differ. The
+two clients are independent, nil-able fields on the importer/server.
 
 Its job contract mirrors the existing one (`POST /job`, `GET /health`,
 `POST /setup`):
@@ -96,9 +136,53 @@ The decrypt op is just an ffmpeg invocation:
 <out.m4b>`, reporting progress by parsing ffmpeg's `-progress` output (it emits
 `out_time_us` / total, a real percentage, exactly what the job bar wants).
 
-Like `drm-sidecar`, it is wired in compose, optional (an empty
-`AUDIBLE_SIDECAR_URL` disables audiobooks, same pattern as the no-DRM mode), and
-mounts the shared work dir.
+**Gap found in step 2: the existing `/job` contract is synchronous (one request,
+one response, no progress stream).** That is fine for the seconds-long ebook
+ops, but an audiobook decrypt is minutes. So: the audiobook sidecar's decrypt
+runs ffmpeg with `-progress pipe:1`, parses `out_time_us` vs the known total
+duration, and writes the fraction to a **sibling `<output>.progress` JSON file**
+in the shared work dir as it goes. The job response stays synchronous (returns
+when ffmpeg finishes), but the Go side can poll that progress file during the
+call to drive the `/imports` bar (wired in build step 6). This keeps the simple
+request/response contract while still giving a real percentage; no streaming
+HTTP needed.
+
+**Gap found in step 2: `audible-activator` uses the removed Selenium 3 API**
+(`find_element_by_id`, `webdriver.Chrome(executable_path=...)`), so it does not
+run as-is on Selenium 4. Combined with its own README admitting it breaks against
+Audible site changes, the v1 plan is: **the paste-activation-bytes setup path is
+the fully-built, reliable primary**, and the Selenium login retrieval is a
+best-effort secondary (modernized to Selenium 4) that may need re-hardening over
+time. The feature is fully usable via paste even if browser retrieval is down.
+`extract_activation_bytes` is trivial (first 4 bytes of the activation blob,
+byte-swapped to 8 hex chars) and is reimplemented cleanly, not copied from the
+activator's py2 `common.py`.
+
+Like the ebook sidecar, it is wired in compose, optional (an empty
+`AUDIOBOOK_SIDECAR_URL` disables audiobooks, same pattern as the no-DRM mode),
+and mounts the shared work dir.
+
+### 3.1 Sidecar lifecycle (decided): always-running, lazy browser
+
+Sidecars stay **always-running** (started by compose with the stack), NOT
+started on demand. On-demand would save idle RAM but would require the Go service
+to talk to the container runtime to start a sidecar, breaking the deliberate
+"Go service has no Docker-socket access" hardening boundary, and would add
+cold-start latency on every first import. Not worth it for a single-user deploy.
+
+The real weight is the headless browser. So the rule: the **audiobook sidecar
+idles as only the lightweight ffmpeg-capable Python HTTP server** (~50 MB,
+~0 CPU). Selenium + Chromium is spawned as a **subprocess only during
+`/setup`** (the one-time activation-bytes retrieval) and exits when setup
+returns. It is never kept warm. Decryption jobs (`/job`) use ffmpeg only and
+never touch the browser. This gives the savings of on-demand (no warm browser,
+nothing running for a disabled sidecar) without the Docker-socket escalation.
+
+Idle cost with both sidecars enabled is roughly ~100 MB RAM total and ~0 CPU;
+each is independently optional, so you pay nothing for a sidecar you don't
+enable ("none"). If true on-demand is ever wanted (RAM-constrained, rare
+imports), the clean path is a compose `profiles` group started manually before a
+batch, not auto-start from the Go service.
 
 ## 4. Import flow (what reuses, what is new)
 
@@ -106,7 +190,7 @@ mounts the shared work dir.
 exactly like the comic CBR branch:
 
 ```text
-*.epub / *.acsm   -> existing ADEPT path (drm-sidecar)            [unchanged]
+*.epub / *.acsm   -> existing ADEPT path (ebook-sidecar)            [unchanged]
 *.cbz / *.cbr     -> comic path (convert CBR, no sidecar)         [unchanged]
 *.aax             -> audible-sidecar decrypt -> clean .m4b -> import   [new]
 ```
@@ -217,28 +301,210 @@ to open there).
 
 ## 8. Build order
 
-1. `audible-sidecar`: new container (ffmpeg + Selenium), `/health`, `/setup`
-   (retrieve-via-login AND paste-bytes), `/job` decrypt (ffmpeg
-   `-activation_bytes`, `-progress` parsing). Optional via empty
-   `AUDIBLE_SIDECAR_URL`. Verify decrypt against the 3 real `.aax` test files
-   once the user has extracted their bytes.
-2. `internal/audio`: `Read`/`CoverImage` via ffprobe/ffmpeg on a clean M4B; unit
-   tests against a tiny synthetic chaptered M4B fixture (ffmpeg can generate one
-   from silence + a chapters file, so no real audiobook is needed in the repo).
-3. Schema/catalog: `format = "audio"`, `formatForPath`/`indexableExt`/
-   `readMetadata`/`coverImageFor` branches; `.m4b` in the library, `.aax` not.
-4. Import: `importable()` accepts `.aax`; `pipeline()` routes it to the audible
-   sidecar decrypt (an `onProgress("converting", ...)` step), then the shared
-   tail. Verify end to end with a real `.aax`.
-5. Player: `audio.html` + `audio.js` + `/chapters`, format-dispatched at
-   `/read/{slug}`; range-served file for seeking; position persisted. (Browser-
-   verified by the user; JS checked statically, per convention.)
-6. First-run setup UI: the web setup form gains an audiobook section (login or
-   paste bytes), gated on the audible sidecar being present. The setup form is
-   hidden entirely when the sidecar is disabled (mirrors the no-DRM mode).
-7. OPDS: emit the audio media type (decide on X4 inclusion).
-8. `.aaxc` fast-follow: voucher-key path in the sidecar; reject voucherless
-   `.aaxc` into `failed/`.
+1. (DONE) **Rename `drm-sidecar` -> `ebook-sidecar`** (its own self-contained step, no
+   behavior change): the compose service + dir, `DRM_SIDECAR_URL` ->
+   `EBOOK_SIDECAR_URL`, the Go field/var names where they read as generic "DRM"
+   (`s.DRM`, `drmClient` -> ebook-specific), and docs (DESIGN/DEPLOY/README).
+   Kept `internal/drm` as the package name (it IS the ebook DRM client; renaming
+   the package was churn with no behavior value). `EBOOK_SIDECAR_URL` keeps
+   `DRM_SIDECAR_URL` as a fallback so existing deploys don't break. Shipped +
+   verified (epub import unchanged) before adding audiobooks.
+2. (DONE) `audiobook-sidecar`: container (ffmpeg, Python), `/health`,
+   `/setup` (paste-bytes built; login was a documented stub in step 2, now
+   implemented in step 11 via the `audible` library, no Selenium),
+   `/job` decrypt (ffmpeg `-activation_bytes -c copy`, `-progress`
+   parsed into a sibling `<out>.progress` file). Optional via empty
+   `AUDIOBOOK_SIDECAR_URL`; in dev+prod compose + the release image matrix.
+   Verified by building/running the container and exercising the full contract;
+   decrypt fails cleanly with wrong bytes on a real `.aax`. A SUCCESSFUL decrypt
+   still needs the user's real activation bytes.
+3. (DONE) `internal/audible.Client` (Go side): mirrors `drm.Client`
+   (`Health`/`Configured`/`Decrypt`) with audiobook-specific setup
+   (`SetupBytes` / `SetupLogin`) and a package-level `Progress(path)` that reads
+   the sidecar's progress file. 30-min timeout (a long decrypt). Tested against a
+   mock AND the real running sidecar (contract verified end to end). Wiring it as
+   a second optional client on the importer/server lands with the import step.
+4. (DONE) `internal/audio`: `Read`/`CoverImage` for a clean M4B, parsing the
+   MP4/ISO-BMFF boxes in **pure Go** (NOT ffprobe/ffmpeg: the Go side never
+   shells out, ffmpeg lives only in the sidecar, so the distroless library image
+   needs no new runtime dep). Reads `moov/mvhd` (duration), `moov/udta/meta/ilst`
+   (iTunes tags: `©nam` title, `©ART` author, `aART` narrator, `©day` year,
+   `covr` cover), and chapters from **either** representation:
+   - **Nero `chpl`** box (a flat start-time + title list) is what ffmpeg's muxer
+     writes; preferred when present.
+   - **QuickTime chapter text track** (the audio trak's `tref/chap` points at a
+     `text` trak whose `stts` + text samples give chapter times + titles) is what
+     REAL Audible files carry: they have NO `chpl`. This was a gap caught by
+     testing the parser against a real `.aax`; the synthetic ffmpeg fixture has a
+     `chpl`, so it alone would not have exposed it. `Read` falls back to the text
+     track when `chpl` is absent. The `.aax`'s `moov` is unencrypted, so the
+     parser was validated directly against a real 27-chapter book (titles + start
+     times match) before the clean-`.m4b` decrypt path even exists.
+   Tests build a tiny chaptered M4B fixture in-process with ffmpeg (a TEST-only
+   dep, skipped if ffmpeg is absent) and also force the text-track path by
+   renaming the fixture's `chpl` box to `free`. Cover present/absent both
+   covered. All checks green (vet + full suite).
+5. (DONE) Schema/catalog: `format = "audio"`; `formatForPath`/`indexableExt`/
+   `readMetadata`/`coverImageFor` branch on `.m4b` (in the library) vs `.aax`
+   (not: decrypted at import). `readMetadata` maps `internal/audio`'s shared
+   fields onto the upsert struct and also returns an `audioMeta{Narrator,
+   Duration}` carried into two new, file-derived (never user-edited) columns
+   `narrator` + `duration_secs` (migrated like `format` was, populated on every
+   index, surfaced on `Book`). Gaps found in the code and closed in this step:
+   - **Metadata embed:** `EmbedMetadata` would have fallen through to the epub
+     writer for an audiobook and corrupted the `.m4b` (`internal/audio` is
+     read-only, no writer). Now refused cleanly with a reason; an audio edit
+     stays in the catalog only. Covered by a test.
+   - **Download MIME:** the `/file` handler hard-coded epub/cbz; `.m4b` now
+     downloads as `audio/mp4` with a `.m4b` name.
+   - **Reader dispatch:** the `/read/{slug}` handler would have loaded an
+     audiobook into the epub.js reader. It now returns 501 (player is step 8);
+     the file is still downloadable. A visible placeholder, not silent breakage.
+   Tested by indexing a real ffmpeg-built `.m4b` and asserting format=audio +
+   narrator + duration. vet/golangci-lint clean, full suite green.
+6. (DONE) Import: `importable()` + `sourceFor()` accept `.aax` (source
+   `audible-import`). `pipeline()` routes `.aax` to a new `decryptAudible()`
+   that, like the comic branch, skips the epub inspection and drives the
+   audiobook sidecar. The sidecar's `/job` decrypt is synchronous, so
+   `decryptAudible` polls the sibling `<out>.m4b.progress` file (via
+   `audible.Progress`) in a goroutine and reports `onProgress("converting",
+   frac, "NN%")` so the /imports bar fills during a multi-minute conversion;
+   the clean `.m4b` then flows through the shared tail (verify -> Author/Title
+   rename keeping `.m4b` -> index as `format=audio` -> archive the original
+   `.aax` to done/). `verify()` parses the `.m4b` via `internal/audio`. The
+   `audible.Client` is wired on the `Importer` (`Audible` field) and built in
+   `main.go` from `AUDIOBOOK_SIDECAR_URL` / `-audiobook-sidecar`, independent of
+   the ebook sidecar (the "one / other / both / none" surface): empty disables
+   it and `.aax` is rejected into `failed/` with a clear reason. A startup
+   health probe logs ready / needs-setup / down. Tested end to end with a mock
+   sidecar that produces a real ffmpeg `.m4b` (asserts library path, format,
+   narrator, archived original) and a disabled-sidecar reject test; the `.aax`
+   unit cases are in `TestImportable`/`TestSourceFor`. A real `.aax` decrypt
+   still needs the user's activation bytes (not yet extracted), the one path
+   not exercisable here. vet/gofmt/golangci-lint clean, full suite green.
+7. (DONE) **Setup UI generalization.** The singular AdobeID-only `needsSetup`
+   bool became a `setupState{Ebook, Audiobook}` that probes each sidecar
+   independently. The first-run area is now a **banner above the library** (not a
+   full-page gate, decided with the user): the library stays browsable while
+   setup is pending. It shows an **Ebook DRM (Adobe)** card when the ebook
+   sidecar is enabled + unconfigured AND/OR an **Audiobook DRM (Audible)** card
+   when the audiobook sidecar is. The audiobook card has a **paste-bytes / login
+   tab toggle** (`audMode()` in app.js); paste posts `mode=bytes`, login posts
+   `mode=login`, both to `POST /api/setup/audiobook` (`apiSetupAudiobook` ->
+   `SetupBytes`/`SetupLogin`). A nil/unreachable sidecar leaves its card hidden,
+   so the "one / other / both / none" surface (§0) holds. `web.New` takes the
+   audiobook client; wired in `main.go`. Tested: setupState probing
+   (unconfigured/configured/unreachable), the handler (bytes/login/no-client/
+   empty), and a real-template render asserting the card + tabs appear. Verified
+   end to end against the LIVE stack: the running library showed the card from
+   the real running sidecar, a paste-bytes POST wrote `secrets/
+   audible_activation_bytes` and the card then disappeared (throwaway value
+   removed afterwards). At this point the login path was still the stub from
+   step 2; step 11 makes it work. vet/gofmt/golangci-lint clean, JS
+   syntax-checked, full suite green.
+8. (DONE) Player. `/read/{slug}` now dispatches `format=audio` to a new
+   `audio.html` + `audio.js` (the 501 placeholder from step 5 is gone). It uses
+   the browser's native `<audio controls>` for transport and adds: a chapter
+   list fetched from `GET /book/{slug}/chapters` (click to seek, current chapter
+   highlighted in the bar), resume from the saved position, and +/-30s skip. The
+   file streams from a new inline `GET /book/{slug}/audio` (separate from the
+   attachment-serving `/file`) so the browser can range-seek; `http.ServeFile`
+   handles Range. Position persists through the SAME `/read` endpoint the other
+   readers use: elapsed seconds in `cfi`, `percent` = seconds/duration, saved
+   debounced on `timeupdate`/`pause` and via `sendBeacon` on page hide. Both new
+   endpoints are audio-only (404 otherwise).
+
+   **Verified (server side only):** Go tests cover `/chapters` (real chapters +
+   duration), `/audio` (206 + correct byte slice, inline not attachment),
+   non-audio 404s, and a real-template render asserting the player markup. The
+   same three checks pass against the LIVE container with a synthetic chaptered
+   `.m4b` (`/chapters` parsed, `/audio` returned `206` + `Content-Range`, player
+   page rendered; test file removed after). JS is syntax-checked.
+
+   **NOT verified (playback + player UI):** whether audio actually plays is
+   inherently the user's to confirm, no automated check (and no assistant) can
+   hear sound, and the synthetic test `.m4b` is silence besides. Also unconfirmed
+   in a real browser: clicking a chapter seeks, the current-chapter highlight
+   tracks playback, resume restores the saved position, the +/-30s buttons, and
+   `sendBeacon` saving on unload. These need a human with ears and a real
+   decrypted book; that pass is pending.
+9. (DONE) OPDS. `acquisitionType` now maps `format=audio` to the `audio/mp4`
+   media type. **X4 inclusion decided (with the user): exclude audiobooks from
+   the e-reader feeds, expose them in a dedicated one.** The X4 is e-ink and
+   cannot play audio, so an audiobook in its feed would be an un-openable
+   download. The default feeds (`/opds/all`, `/opds/new`, `/opds/search`) now
+   pass `ExcludeFormat: "audio"`, and a new `/opds/audiobooks` feed
+   (`Format: "audio"`, linked from the nav root) carries the audiobooks with the
+   `audio/mp4` type for audio-capable clients. Filtering is done in the catalog
+   (`ListOptions.Format` / `ExcludeFormat`, new), so the X4 paging chokepoint
+   (`acquisitionPage`) stays correct, no post-filtering that would undersize a
+   page. Tested: audio excluded from all three e-reader feeds (ebook still
+   present), the audiobooks feed lists only audio with `audio/mp4`, the nav root
+   links it, and the type mapping for all four formats. Verified against the live
+   stack (nav link present, `/opds/audiobooks` 200, `/opds/all` unchanged at the
+   real 9 books). vet/gofmt/golangci-lint clean, full suite green.
+10. (DONE) `.aaxc` fast-follow. The sidecar's `decrypt()` now branches on
+    extension: `.aax` uses `-activation_bytes` (account secret) as before;
+    `.aaxc` reads a PER-FILE key + IV from a sibling `<name>.voucher` JSON and
+    uses `ffmpeg -audible_key <k> -audible_iv <iv>` (no account secret, so an
+    `.aaxc` decrypts even when activation bytes are unset). The voucher parser
+    reads the canonical audible-cli layout
+    (`content_license.license_response.{key,iv}`) with a flat `{key,iv}` fallback,
+    and raises a clear error for a missing voucher or one with no key/iv, so a
+    voucherless `.aaxc` fails cleanly into `import/failed/`. On the Go side
+    `importable`/`isAudible`/`sourceFor` accept `.aaxc`, and the dropped `.aaxc`
+    plus its `.voucher` are archived together to `done/` (or `failed/`), the
+    voucher is never orphaned in the import root. `.aaxc` is drop-in only (like
+    `.aax`), not browser-uploadable: it is large and arrives as a file pair.
+    Verified: the voucher parser against the real canonical/flat/missing/no-key
+    shapes; the Go pipeline end to end through a mock sidecar (library landing +
+    voucher moved to `done/`); `.aaxc` classification. ffmpeg confirmed to expose
+    `-audible_key`/`-audible_iv`. The ffmpeg `.aaxc` decrypt itself is unrun (the
+    user has only `.aax` test files, no `.aaxc`/voucher), the one path not
+    exercisable here. vet/gofmt/golangci-lint clean, Python compiles, full suite
+    green.
+11. (DONE) **Audible login retrieval (stub -> working).** The login *form*
+    already shipped in step 7; this step made the sidecar's `setup_login`
+    actually work. It uses the maintained `audible` library (mkb79, pinned
+    `==0.8.2`): `Authenticator.from_login(email, password, marketplace)` then
+    `get_activation_bytes(extract=True)`, NO browser and NO Selenium (pure HTTP +
+    crypto), so the "always running, lazy browser" promise (§0) is kept by the
+    library needing no browser at all; it is lazy-IMPORTED inside `setup_login`
+    so a dep issue can't break decrypt/health. On success the 8 hex bytes are
+    stored via the same `_store_bytes` as paste, so the rest of the pipeline is
+    unchanged. Challenge handling is intentionally minimal (decided with the
+    user): the CAPTCHA/OTP/CVF/approval callbacks all refuse, so if Amazon
+    demands one the login aborts with a clear "use paste instead" error rather
+    than hanging. The form gained a marketplace selector (us/uk/de/... ), passed
+    through `SetupLogin(ctx, mail, pw, marketplace)` -> sidecar. Verified in the
+    real sidecar image (audible 0.8.2 imports; a junk-credential login reached
+    Amazon, hit a real CAPTCHA challenge, and returned the clean paste-fallback
+    error). A real SUCCESSFUL login needs the user's actual Amazon credentials,
+    not exercised here. DEPLOY/README updated to mark login working. vet/gofmt/
+    golangci-lint clean, Python compiles, full suite green.
+12. (DONE) **Two-step OTP login (the step-11 "refuse OTP" call was wrong).** Step
+    11 refused 2FA codes; but the user has 2FA, received the code, and had
+    nowhere to enter it. The fix: a genuine two-step flow. `audible`'s
+    `from_login` is one blocking call that invokes `otp_callback` when MFA is
+    hit, and the one-time code does not exist until the password step triggers
+    it, so it can't be collected up front. The sidecar now runs the login on a
+    background thread whose `otp_callback` blocks on a queue; step-1 POST
+    `{mail,password}` returns `{otp_required, login_id}` once the thread reaches
+    the prompt, and step-2 POST `{login_id, otp}` pushes the code into that
+    session's queue to finish. Parked logins expire (TTL) so abandoned attempts
+    can't leak threads. The Go client gained `SetupLogin -> LoginResult{OTPRequired,
+    LoginID}` + `SetupLoginOTP`; the web handler returns JSON the new `audLogin`/
+    `audOtp` JS drives (reveals an OTP sub-form, submits the code, reloads on
+    success). **CAPTCHA still always refuses** (an image can't be solved here);
+    the form says so plainly, frames login as best-effort with no promises, and
+    points to the `audible` Python CLI + paste as the dependable route. Verified:
+    the two-step threading/queue bridge end to end against the real worker (a
+    simulated MFA prompt parked, then completed on OTP delivery, bytes stored);
+    error paths (unknown/expired login_id, empty OTP); the real sidecar image
+    still invokes the callback on a real Amazon MFA challenge. A real successful
+    2FA login needs the user's credentials + live code, not exercised here.
+    vet/gofmt/golangci-lint clean, Python compiles, JS syntax-checked, full suite
+    green.
 
 ## 9. Risks / notes
 

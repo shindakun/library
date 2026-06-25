@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/steve/library/internal/audible"
+	"github.com/steve/library/internal/audio"
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/drm"
@@ -33,9 +35,10 @@ import (
 //	import/failed/ <- originals move here on failure (with a .log sibling)
 type Importer struct {
 	Cat        *catalog.Catalog
-	DRM        *drm.Client
-	ImportDir  string // host path watched for new files
-	LibraryDir string // where clean epubs land
+	DRM        *drm.Client     // ebook DRM sidecar (fulfill/decrypt); nil disables it
+	Audible    *audible.Client // audiobook DRM sidecar (.aax -> .m4b); nil disables it
+	ImportDir  string          // host path watched for new files
+	LibraryDir string          // where clean epubs land
 	// SidecarPath maps a host import path to the path the sidecar sees for the
 	// same file (shared volume mounted at a possibly-different path). For the
 	// common case where both mount the same volume at the same path, set it to
@@ -272,15 +275,18 @@ func (im *Importer) handle(ctx context.Context, hostPath string) {
 	jobs.Finish(jobID, StateDone, "", slug)
 }
 
-// pipeline turns a dropped file into a clean, DRM-free epub and returns its
-// HOST path. Three cases:
+// pipeline turns a dropped file into a clean, importable book and returns its
+// HOST path. Cases:
 //
 //	.acsm            -> fulfill (Adobe) -> ADEPT epub -> decrypt -> clean epub
 //	.epub (ADEPT)    -> decrypt -> clean epub
 //	.epub (no DRM)   -> used as-is (direct import; the sidecar is never touched)
+//	.cbz             -> used as-is; .cbr -> converted to .cbz
+//	.aax / .aaxc     -> audiobook sidecar decrypt -> clean .m4b
+//	                    (.aaxc also needs its sibling .voucher)
 //
 // Sidecar outputs land in the shared work dir, so we resolve the sidecar's
-// returned path to the host view by basename. The no-DRM case returns the
+// returned path to the host view by basename. The as-is cases return the
 // original import path unchanged.
 // progressFunc reports a pipeline step transition (and an optional 0..1 fraction
 // + detail) to the import-job tracker. nil-safe via the noopProgress default.
@@ -300,6 +306,12 @@ func (im *Importer) pipeline(ctx context.Context, hostPath string, onProgress pr
 			return im.convertCBR(hostPath, onProgress)
 		}
 		return hostPath, nil
+	}
+
+	// Audiobooks are not epubs either: an .aax is decrypted to a clean .m4b by
+	// the audiobook sidecar (ffmpeg), skipping the epub inspection entirely.
+	if isAudible(hostPath) {
+		return im.decryptAudible(ctx, hostPath, onProgress)
 	}
 
 	isACSM := strings.EqualFold(filepath.Ext(hostPath), ".acsm")
@@ -366,6 +378,59 @@ func (im *Importer) convertCBR(hostPath string, onProgress progressFunc) (string
 	return dst, nil
 }
 
+// decryptAudible drives the audiobook sidecar to turn a dropped .aax into a
+// clean .m4b in the work dir, returning the .m4b's host path. The sidecar's
+// /job decrypt is synchronous (it returns when ffmpeg finishes), but it writes
+// progress to a sibling "<out>.m4b.progress" file as it runs; we poll that file
+// in a goroutine so the /imports bar fills during a multi-minute conversion.
+//
+// If the audiobook sidecar is disabled (no client), the .aax is rejected with a
+// clear reason and lands in import/failed/ like any other failed import.
+func (im *Importer) decryptAudible(ctx context.Context, hostPath string, onProgress progressFunc) (string, error) {
+	if im.Audible == nil {
+		return "", fmt.Errorf("audiobook sidecar disabled: cannot process %s (Audible audiobooks need the audiobook sidecar)", filepath.Base(hostPath))
+	}
+
+	in := im.SidecarPath(hostPath)
+	onProgress("converting", 0, "")
+
+	// The sidecar names its output "<base>.m4b" in the shared work dir; the
+	// progress file is that path + ".progress". We know the base from the input,
+	// so we can poll progress on the host side without the sidecar telling us the
+	// path first. (We still trust the path the sidecar RETURNS for the result.)
+	base := strings.TrimSuffix(filepath.Base(hostPath), filepath.Ext(hostPath))
+	progressHostPath := filepath.Join(im.workDir(), base+".m4b.progress")
+
+	// Poll the progress file until the decrypt returns. The poller is stopped via
+	// done before we use the result, so it never races the cleanup.
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if frac, ok := audible.Progress(progressHostPath); ok {
+					onProgress("converting", frac, fmt.Sprintf("%d%%", int(frac*100)))
+				}
+			}
+		}
+	}()
+
+	cleanSidecarPath, err := im.Audible.Decrypt(ctx, in)
+	close(done)
+	if err != nil {
+		return "", fmt.Errorf("audiobook decrypt: %w", err)
+	}
+	onProgress("converting", 1, "100%")
+	// Sidecar wrote into the shared work dir; map back to the host view.
+	return filepath.Join(im.workDir(), filepath.Base(cleanSidecarPath)), nil
+}
+
 func (im *Importer) fail(hostPath string, cause error) {
 	fmt.Fprintf(os.Stderr, "import: FAILED %s: %v\n", filepath.Base(hostPath), cause)
 	failedDir := filepath.Join(im.ImportDir, "failed")
@@ -375,20 +440,41 @@ func (im *Importer) fail(hostPath string, cause error) {
 		fmt.Fprintf(os.Stderr, "import: could not move %s to failed/: %v\n", filepath.Base(hostPath), err)
 		return
 	}
+	im.moveSidecarVoucher(hostPath, failedDir)
 	if err := os.WriteFile(dst+".log", []byte(cause.Error()+"\n"), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "import: could not write %s.log: %v\n", filepath.Base(dst), err)
 	}
 }
 
+// moveSidecarVoucher moves an .aaxc's sibling <base>.voucher into destDir
+// alongside the file it belongs to, so the voucher doesn't get orphaned in the
+// import root after the .aaxc is archived. No-op for non-.aaxc inputs or when no
+// voucher is present.
+func (im *Importer) moveSidecarVoucher(hostPath, destDir string) {
+	if !strings.EqualFold(filepath.Ext(hostPath), ".aaxc") {
+		return
+	}
+	voucher := strings.TrimSuffix(hostPath, filepath.Ext(hostPath)) + ".voucher"
+	if _, err := os.Stat(voucher); err != nil {
+		return // no voucher to move
+	}
+	if err := moveFile(voucher, filepath.Join(destDir, filepath.Base(voucher))); err != nil {
+		fmt.Fprintf(os.Stderr, "import: could not move voucher %s: %v\n", filepath.Base(voucher), err)
+	}
+}
+
 // archive moves a processed original into the given import subdir (done/failed),
-// logging on failure. A stuck original would otherwise be reprocessed.
+// logging on failure. A stuck original would otherwise be reprocessed. An
+// .aaxc's sibling voucher is moved along with it.
 func (im *Importer) archive(hostPath, sub string) {
 	subDir := filepath.Join(im.ImportDir, sub)
 	_ = os.MkdirAll(subDir, 0o755) // self-heal if the subdir was removed
 	dst := filepath.Join(subDir, filepath.Base(hostPath))
 	if err := moveFile(hostPath, dst); err != nil {
 		fmt.Fprintf(os.Stderr, "import: could not archive %s to %s/: %v\n", filepath.Base(hostPath), sub, err)
+		return
 	}
+	im.moveSidecarVoucher(hostPath, subDir)
 }
 
 // uniquePath returns p, or p with a " (2)", " (3)", … suffix before the
@@ -417,7 +503,7 @@ func importable(name string) bool {
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".acsm", ".epub", ".cbz", ".cbr":
+	case ".acsm", ".epub", ".cbz", ".cbr", ".aax", ".aaxc":
 		return true
 	default:
 		return false
@@ -430,9 +516,20 @@ func sourceFor(p string) string {
 		return "acsm"
 	case ".cbz", ".cbr":
 		return "comic-import"
+	case ".aax", ".aaxc":
+		return "audible-import"
 	default:
 		return "epub-import"
 	}
+}
+
+// isAudible reports whether a dropped file is an Audible audiobook (.aax or the
+// newer .aaxc) that must be decrypted to a clean .m4b by the audiobook sidecar
+// before import. A .aaxc additionally needs its sibling .voucher (the sidecar
+// reads the per-file key/IV from it).
+func isAudible(p string) bool {
+	ext := strings.ToLower(filepath.Ext(p))
+	return ext == ".aax" || ext == ".aaxc"
 }
 
 // isComic reports whether a dropped file is a comic archive (imported without
@@ -452,18 +549,28 @@ func isCBR(p string) bool {
 // format: epub via epub.Read, comic via comic.Read. A parse failure here means
 // the file is corrupt/unsupported and the import fails (lands in failed/).
 func verify(path string) (authors []string, title string, err error) {
-	if isComic(path) {
+	switch {
+	case isComic(path):
 		m, e := comic.Read(path)
 		if e != nil {
 			return nil, "", e
 		}
 		return m.Authors, m.Title, nil
+	case strings.EqualFold(filepath.Ext(path), ".m4b"):
+		// The decrypted audiobook is a .m4b (not the dropped .aax); verify it
+		// parses and pull its authors + title for the on-disk library name.
+		m, e := audio.Read(path)
+		if e != nil {
+			return nil, "", e
+		}
+		return m.Authors, m.Title, nil
+	default:
+		m, e := epub.Read(path)
+		if e != nil {
+			return nil, "", e
+		}
+		return m.Authors, m.Title, nil
 	}
-	m, e := epub.Read(path)
-	if e != nil {
-		return nil, "", e
-	}
-	return m.Authors, m.Title, nil
 }
 
 func moveFile(src, dst string) error {

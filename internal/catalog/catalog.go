@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steve/library/internal/audio"
 	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/epub"
 	"github.com/steve/library/internal/fileutil"
@@ -41,8 +42,13 @@ type Book struct {
 	HasCover    bool
 	AddedAt     time.Time
 	Source      string
-	Format      string // "epub" | "cbz"; how to parse/serve this book
+	Format      string // "epub" | "cbz" | "audio"; how to parse/serve this book
 	Identifiers map[string]string
+
+	// Audio-only, file-derived. Narrator and Duration (seconds) are read from a
+	// clean .m4b at index time; zero/empty for epubs and comics.
+	Narrator string
+	Duration float64
 
 	// SlugOverride, when set, is the book's stable public id, captured at import
 	// from the content-hash slug. It keeps the URL/OPDS identity fixed even after
@@ -156,15 +162,24 @@ func (c *Catalog) cacheCover(absPath, slug string) {
 	_ = os.WriteFile(dst, data, 0o644)
 }
 
+// audioMeta carries the audio-only, file-derived fields that don't fit
+// epub.Metadata. Zero value for non-audio formats.
+type audioMeta struct {
+	Narrator string
+	Duration float64 // seconds
+}
+
 // readMetadata reads book metadata regardless of format and returns it in the
-// epub.Metadata shape upsertBook expects. Comics map their ComicInfo.xml /
-// filename-derived fields onto the same struct (epub-only fields stay empty), so
-// the index path needs no format branching beyond this one call.
-func readMetadata(absPath string) (*epub.Metadata, error) {
-	if formatForPath(absPath) == "cbz" {
+// epub.Metadata shape upsertBook expects, plus an audioMeta for the audio-only
+// fields. Comics and audiobooks map their format-specific fields onto the shared
+// struct (fields they lack stay empty), so the index path needs no format
+// branching beyond this one call.
+func readMetadata(absPath string) (*epub.Metadata, audioMeta, error) {
+	switch formatForPath(absPath) {
+	case "cbz":
 		cm, err := comic.Read(absPath)
 		if err != nil {
-			return nil, err
+			return nil, audioMeta{}, err
 		}
 		return &epub.Metadata{
 			Title:       cm.Title,
@@ -176,18 +191,41 @@ func readMetadata(absPath string) (*epub.Metadata, error) {
 			Published:   cm.Published,
 			Identifiers: map[string]string{},
 			HasCover:    cm.HasCover,
-		}, nil
+		}, audioMeta{}, nil
+	case "audio":
+		am, err := audio.Read(absPath)
+		if err != nil {
+			return nil, audioMeta{}, err
+		}
+		return &epub.Metadata{
+			Title:       am.Title,
+			Authors:     am.Authors,
+			Series:      am.Series,
+			SeriesIndex: am.SeriesIndex,
+			Language:    am.Language,
+			Publisher:   am.Publisher,
+			Description: am.Description,
+			Published:   am.Published,
+			Identifiers: map[string]string{},
+			HasCover:    am.HasCover,
+		}, audioMeta{Narrator: am.Narrator, Duration: am.Duration}, nil
+	default:
+		em, err := epub.Read(absPath)
+		return em, audioMeta{}, err
 	}
-	return epub.Read(absPath)
 }
 
 // coverImageFor extracts a cover from a book file, branching on format so the
 // cover cache stores the right bytes for epubs and comics alike.
 func coverImageFor(absPath string) ([]byte, string, error) {
-	if formatForPath(absPath) == "cbz" {
+	switch formatForPath(absPath) {
+	case "cbz":
 		return comic.CoverImage(absPath)
+	case "audio":
+		return audio.CoverImage(absPath)
+	default:
+		return epub.CoverImage(absPath)
 	}
-	return epub.CoverImage(absPath)
 }
 
 // formatForPath classifies a library file by extension into the catalog's
@@ -197,17 +235,20 @@ func formatForPath(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".cbz", ".cbr":
 		return "cbz" // CBR is converted to CBZ at import; stored as cbz
+	case ".m4b":
+		return "audio" // clean audiobook; .aax is decrypted to .m4b at import
 	default:
 		return "epub"
 	}
 }
 
-// indexableExt reports whether a library file is one Scan should index: an epub
-// or a comic archive. CBR is not listed: it is converted to CBZ at import, so a
-// raw .cbr never sits in the library.
+// indexableExt reports whether a library file is one Scan should index: an epub,
+// a comic archive, or a clean audiobook. CBR is not listed (converted to CBZ at
+// import) and neither is .aax (decrypted to .m4b at import), so neither raw form
+// ever sits in the library.
 func indexableExt(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".epub", ".cbz":
+	case ".epub", ".cbz", ".m4b":
 		return true
 	default:
 		return false
@@ -339,6 +380,12 @@ func (c *Catalog) migrate() error {
 	if err := c.addColumnIfMissing("books", "format", "TEXT NOT NULL DEFAULT 'epub'"); err != nil {
 		return err
 	}
+	if err := c.addColumnIfMissing("books", "narrator", "TEXT"); err != nil {
+		return err
+	}
+	if err := c.addColumnIfMissing("books", "duration_secs", "REAL"); err != nil {
+		return err
+	}
 	if err := c.addColumnIfMissing("books", "edited_fields", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -418,7 +465,7 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 		return 0, err
 	}
 
-	meta, err := readMetadata(absPath)
+	meta, am, err := readMetadata(absPath)
 	if err != nil {
 		return 0, fmt.Errorf("read metadata: %w", err)
 	}
@@ -429,7 +476,7 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	id, err := upsertBook(ctx, tx, rel, hash, info.Size(), source, formatForPath(absPath), meta, existingID)
+	id, err := upsertBook(ctx, tx, rel, hash, info.Size(), source, formatForPath(absPath), meta, am, existingID)
 	if err != nil {
 		return 0, err
 	}
@@ -448,7 +495,7 @@ func (c *Catalog) Index(ctx context.Context, absPath, source string) (int64, err
 	return id, nil
 }
 
-func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, source, format string, meta *epub.Metadata, existingID int64) (int64, error) {
+func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, source, format string, meta *epub.Metadata, am audioMeta, existingID int64) (int64, error) {
 	sortTitle := sortKey(meta.Title)
 	now := time.Now().Unix()
 
@@ -463,9 +510,10 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 		// the skip flags further down).
 		var editedJSON string
 		var curTitle, curSortTitle, curLanguage, curPublisher, curDescription, curPublished string
+		var curNarrator sql.NullString
 		_ = tx.QueryRowContext(ctx,
-			`SELECT edited_fields, title, sort_title, language, publisher, description, published FROM books WHERE id=?`, existingID).
-			Scan(&editedJSON, &curTitle, &curSortTitle, &curLanguage, &curPublisher, &curDescription, &curPublished)
+			`SELECT edited_fields, title, sort_title, language, publisher, description, published, narrator FROM books WHERE id=?`, existingID).
+			Scan(&editedJSON, &curTitle, &curSortTitle, &curLanguage, &curPublisher, &curDescription, &curPublished, &curNarrator)
 		ed := editedSet(editedJSON)
 
 		{
@@ -501,13 +549,14 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 		_, err := tx.ExecContext(ctx, `
 			UPDATE books SET title=?, sort_title=?, language=?, publisher=?,
 			    description=?, published=?, file_size=?, file_hash=?,
-			    has_cover=?, source=?, format=? WHERE id=?`,
+			    has_cover=?, source=?, format=?, narrator=?, duration_secs=? WHERE id=?`,
 			title, st,
 			keep(fieldLanguage, meta.Language, curLanguage),
 			keep(fieldPublisher, meta.Publisher, curPublisher),
 			keep(fieldDescription, meta.Description, curDescription),
 			keep(fieldPublished, meta.Published, curPublished),
-			size, hash, meta.HasCover, source, format, existingID)
+			size, hash, meta.HasCover, source, format,
+			keep(fieldNarrator, am.Narrator, curNarrator.String), am.Duration, existingID)
 		if err != nil {
 			return 0, err
 		}
@@ -560,11 +609,13 @@ func upsertBook(ctx context.Context, tx *sql.Tx, rel, hash string, size int64, s
 	} else {
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO books (title, sort_title, path, file_size, file_hash,
-			    language, publisher, description, published, has_cover, added_at, source, format, slug_override)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			    language, publisher, description, published, has_cover, added_at, source, format, slug_override,
+			    narrator, duration_secs)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			meta.Title, sortTitle, rel, size, hash,
 			meta.Language, meta.Publisher, meta.Description, meta.Published,
-			meta.HasCover, now, source, format, hashSlug(hash))
+			meta.HasCover, now, source, format, hashSlug(hash),
+			am.Narrator, am.Duration)
 		if err != nil {
 			return 0, err
 		}
@@ -764,9 +815,14 @@ type ListOptions struct {
 	Query  string // FTS query; empty = all
 	Author string
 	Series string
-	Sort   SortOrder
-	Limit  int
-	Offset int
+	// Format, if set, restricts results to that storage format ("epub" | "cbz" |
+	// "audio"). ExcludeFormat, if set, omits that format. Used by OPDS to keep
+	// audiobooks out of the e-reader feed while exposing them in a dedicated one.
+	Format        string
+	ExcludeFormat string
+	Sort          SortOrder
+	Limit         int
+	Offset        int
 }
 
 // List returns books matching opts. Default ordering is by author, then title;
@@ -794,6 +850,14 @@ func (c *Catalog) List(ctx context.Context, opts ListOptions) ([]*Book, error) {
 		from += " JOIN book_series bs ON bs.book_id=b.id JOIN series s ON s.id=bs.series_id"
 		where = append(where, "s.name = ?")
 		args = append(args, opts.Series)
+	}
+	if opts.Format != "" {
+		where = append(where, "b.format = ?")
+		args = append(args, opts.Format)
+	}
+	if opts.ExcludeFormat != "" {
+		where = append(where, "b.format <> ?")
+		args = append(args, opts.ExcludeFormat)
 	}
 	q := "SELECT b.id FROM " + from
 	if len(where) > 0 {
@@ -878,14 +942,16 @@ func (c *Catalog) loadBooks(ctx context.Context, ids []int64) ([]*Book, error) {
 		var added int64
 		var slugOverride, editedFields sql.NullString
 		var editedAt sql.NullInt64
+		var narrator sql.NullString
+		var durationSecs sql.NullFloat64
 		err := c.db.QueryRowContext(ctx, `
 			SELECT id, title, sort_title, language, publisher, description,
 			       published, path, file_size, file_hash, has_cover, added_at, source, format,
-			       slug_override, edited_fields, edited_at
+			       slug_override, edited_fields, edited_at, narrator, duration_secs
 			FROM books WHERE id=?`, id).Scan(
 			&b.ID, &b.Title, &b.SortTitle, &b.Language, &b.Publisher, &b.Description,
 			&b.Published, &b.Path, &b.FileSize, &b.FileHash, &b.HasCover, &added, &b.Source, &b.Format,
-			&slugOverride, &editedFields, &editedAt)
+			&slugOverride, &editedFields, &editedAt, &narrator, &durationSecs)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -897,6 +963,8 @@ func (c *Catalog) loadBooks(ctx context.Context, ids []int64) ([]*Book, error) {
 		if editedAt.Valid {
 			b.EditedAt = time.Unix(editedAt.Int64, 0)
 		}
+		b.Narrator = narrator.String
+		b.Duration = durationSecs.Float64
 		b.AddedAt = time.Unix(added, 0)
 		b.Identifiers = map[string]string{}
 		byID[id] = &b

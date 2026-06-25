@@ -99,15 +99,43 @@ end with the same files in `secrets/`.
 
 ### Web form (default, headless-friendly)
 
-On first run, with `secrets/` empty, the library page shows a **setup form**
-instead of the catalog. Open `http://<lan-ip>:8080/`, enter a fresh / throwaway
-AdobeID, password, and ADE version (2.0 is the default), and submit. The web
-service forwards the credentials to the sidecar, which registers with Adobe and
-writes `secrets/`. After that the form disappears and the endpoint refuses.
+On first run, while a sidecar is enabled but unconfigured, the library page shows
+a **first-run setup banner above the catalog** (the library stays browsable).
+Each enabled-but-unconfigured sidecar gets its own card; a disabled or
+unreachable sidecar shows nothing.
+
+Open `http://<lan-ip>:8080/`. For **Ebook DRM (Adobe)**, enter a fresh /
+throwaway AdobeID, password, and ADE version (2.0 is the default), and submit:
+the web service forwards the credentials to the ebook sidecar, which registers
+with Adobe and writes `secrets/`. After that the card disappears and the endpoint
+refuses.
 
 Credentials travel over your LAN as plain HTTP to the local sidecar and are used
 only to register; they are not stored (only the resulting activation files and
 `.der` key are kept). Keep the service LAN-only.
+
+### Audiobook setup (Audible activation bytes)
+
+If the audiobook sidecar is enabled, the same banner shows an **Audiobook DRM
+(Audible)** card with two modes.
+
+**Paste bytes (the reliable path):** paste your account's 8 hex activation-byte
+characters and save. You can also set them from a shell with
+`make audiobook-setup BYTES=<8 hex chars>`.
+
+**Audible login (best-effort, no promises):** enter your Amazon email/password
+and pick your marketplace (US/UK/DE/...); the sidecar logs in to Audible (via the
+`audible` library, no browser) and fetches the bytes for you. If the account has
+2FA, the form then prompts for the one-time code (the code doesn't exist until
+the password step triggers it, so it's a two-step flow). This *might* work. What
+will NOT work: if Amazon presents a **CAPTCHA** (an image challenge), the login
+can't complete here and always fails. When login won't go through, get your bytes
+out-of-band with a tool like the [`audible`](https://github.com/mkb79/audible-cli)
+Python CLI and paste them.
+
+Either path writes the bytes to `secrets/audible_activation_bytes` and the card
+disappears. The bytes (and, for login, your credentials) are an account secret,
+sent over your LAN to the local sidecar; only the resulting bytes are stored.
 
 ### CLI (the proven fallback)
 
@@ -116,7 +144,7 @@ against the sidecar image directly:
 
 ```sh
 docker compose -f docker-compose.prod.yml run --rm -it \
-  drm-sidecar python /opt/setup.py
+  ebook-sidecar python /opt/setup.py
 ```
 
 It prompts for the AdobeID, password, and ADE version, and writes the same files
@@ -127,7 +155,9 @@ into `secrets/`. Re-run either method to re-authorize.
 - **Add a reader:** point any OPDS client (the X4, or another e-reader) at
   `http://<lan-ip>:8080/opds`.
 - **Browser library:** `http://<lan-ip>:8080/`.
-- **Import:** drop or upload `.acsm` / `.epub`; the watcher fulfills + decrypts.
+- **Import:** drop or upload `.acsm` / `.epub` / `.cbz` / `.cbr` / `.aax` (an
+  `.aaxc` is drop-in only, alongside its `.voucher`); the watcher fulfills,
+  decrypts, and indexes.
 - **Update:** `docker compose -f docker-compose.prod.yml pull && ... up -d`
   (or `make prod-deploy`). State in `data/` / `secrets/` survives.
 - **Logs:** `docker compose -f docker-compose.prod.yml logs -f`.

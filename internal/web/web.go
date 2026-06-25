@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steve/library/internal/audible"
+	"github.com/steve/library/internal/audio"
 	"github.com/steve/library/internal/catalog"
 	"github.com/steve/library/internal/comic"
 	"github.com/steve/library/internal/drm"
@@ -35,9 +37,12 @@ type Server struct {
 	// ImportDir is where browser uploads land, so the import watcher picks them
 	// up and runs the same fulfill/decrypt pipeline as a manual drop.
 	ImportDir string
-	// DRM drives the sidecar; used for the first-run setup form (check whether
-	// Adobe is configured, and run setup). May be nil (setup form disabled).
+	// DRM drives the ebook sidecar; used for the first-run setup form (check
+	// whether Adobe is configured, and run setup). May be nil (section hidden).
 	DRM *drm.Client
+	// Audible drives the audiobook sidecar; backs the audiobook setup form
+	// (activation bytes via paste or login). May be nil (section hidden).
+	Audible *audible.Client
 	// Jobs is the import-job registry, read for the /imports page + SSE stream.
 	// May be nil (the imports endpoints then report an empty list).
 	Jobs *ingest.Jobs
@@ -45,12 +50,12 @@ type Server struct {
 }
 
 // New parses templates and returns a Server.
-func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client, jobs *ingest.Jobs) (*Server, error) {
+func New(cat *catalog.Catalog, importDir string, drmClient *drm.Client, audibleClient *audible.Client, jobs *ingest.Jobs) (*Server, error) {
 	tpl, err := template.ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
-	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, Jobs: jobs, tpl: tpl}, nil
+	return &Server{Cat: cat, ImportDir: importDir, DRM: drmClient, Audible: audibleClient, Jobs: jobs, tpl: tpl}, nil
 }
 
 // Register wires the browser + API routes onto mux.
@@ -62,6 +67,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /book/{slug}/file", s.file)
 	mux.HandleFunc("GET /book/{slug}/cover", s.cover)
 	mux.HandleFunc("GET /book/{slug}/pages", s.comicPages)
+	mux.HandleFunc("GET /book/{slug}/chapters", s.audioChapters)
+	mux.HandleFunc("GET /book/{slug}/audio", s.audioStream)
 	mux.HandleFunc("GET /book/{slug}/page/{n}", s.comicPage)
 	mux.HandleFunc("GET /api/books", s.apiBooks)
 	mux.HandleFunc("PUT /api/books/{slug}/read", s.apiSaveRead)
@@ -73,6 +80,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/scan", s.apiScan)
 	mux.HandleFunc("POST /api/upload", s.apiUpload)
 	mux.HandleFunc("POST /api/setup", s.apiSetup)
+	mux.HandleFunc("POST /api/setup/audiobook", s.apiSetupAudiobook)
 	mux.HandleFunc("GET /imports", s.imports)
 	mux.HandleFunc("GET /api/imports", s.apiImports)
 	mux.HandleFunc("GET /api/imports/stream", s.apiImportsStream)
@@ -90,10 +98,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "index.html", map[string]any{
-		"Books":      books,
-		"Query":      r.URL.Query().Get("q"),
-		"Uploaded":   r.URL.Query().Get("uploaded"),
-		"NeedsSetup": s.needsSetup(r.Context()),
+		"Books":    books,
+		"Query":    r.URL.Query().Get("q"),
+		"Uploaded": r.URL.Query().Get("uploaded"),
+		"Setup":    s.setupState(r.Context()),
 	})
 }
 
@@ -114,6 +122,18 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "comic.html", map[string]any{"Book": b, "StartPage": page})
 		return
 	}
+	if b.Format == "audio" {
+		// Restore the saved position (cfi holds the elapsed seconds for audio,
+		// mirroring how comics store the page number there).
+		start := 0.0
+		if _, cfi := s.Cat.ReadState(r.Context(), b.ID); cfi != "" {
+			if secs, perr := strconv.ParseFloat(cfi, 64); perr == nil && secs >= 0 {
+				start = secs
+			}
+		}
+		s.render(w, "audio.html", map[string]any{"Book": b, "StartSeconds": start})
+		return
+	}
 	s.render(w, "reader.html", map[string]any{"Book": b})
 }
 
@@ -124,10 +144,14 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Content type + download filename match the format so e-readers and OPDS
-	// clients get the right media type (comics download as .cbz).
+	// clients get the right media type (comics download as .cbz, audiobooks as
+	// .m4b).
 	ctype, ext := "application/epub+zip", ".epub"
-	if b.Format == "cbz" {
+	switch b.Format {
+	case "cbz":
 		ctype, ext = "application/vnd.comicbook+zip", ".cbz"
+	case "audio":
+		ctype, ext = "audio/mp4", ".m4b"
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileutil.SafeFilename(b.Title)+ext))
@@ -180,6 +204,59 @@ func (s *Server) comicPages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int{"count": len(pages)})
+}
+
+// audioChapters returns an audiobook's chapter list as JSON
+// [{"title","start"}], read live from the .m4b. The player fetches it once to
+// build its clickable chapter list. Audio-only (404 for other formats).
+func (s *Server) audioChapters(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	if b.Format != "audio" {
+		http.Error(w, "not an audiobook", http.StatusNotFound)
+		return
+	}
+	m, err := audio.Read(s.Cat.AbsPath(b))
+	if err != nil {
+		http.Error(w, "cannot read audiobook", http.StatusInternalServerError)
+		return
+	}
+	// Always emit a (possibly empty) array, plus the duration so the player can
+	// compute percentages without a second read.
+	type chapter struct {
+		Title string  `json:"title"`
+		Start float64 `json:"start"`
+	}
+	out := struct {
+		Duration float64   `json:"duration"`
+		Chapters []chapter `json:"chapters"`
+	}{Duration: m.Duration, Chapters: []chapter{}}
+	for _, c := range m.Chapters {
+		out.Chapters = append(out.Chapters, chapter{Title: c.Title, Start: c.Start})
+	}
+	writeJSON(w, out)
+}
+
+// audioStream serves the audiobook file INLINE (not as an attachment) so the
+// browser's <audio> element streams and seeks it. http.ServeFile handles HTTP
+// range requests, which is exactly what seeking needs. Audio-only (404 else).
+func (s *Server) audioStream(w http.ResponseWriter, r *http.Request) {
+	b, err := s.book(r.Context(), r)
+	if err != nil {
+		s.bookErr(w, err)
+		return
+	}
+	if b.Format != "audio" {
+		http.Error(w, "not an audiobook", http.StatusNotFound)
+		return
+	}
+	// Inline (no Content-Disposition: attachment) so it plays in-page; ServeFile
+	// sets Content-Type from the extension and honors Range for seeking.
+	w.Header().Set("Content-Type", "audio/mp4")
+	http.ServeFile(w, r, s.Cat.AbsPath(b))
 }
 
 // comicPage serves the nth page image (0-based) of a comic, straight from the
@@ -250,21 +327,25 @@ func (s *Server) apiSaveRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadableExt reports whether an uploaded file's extension is one the import
-// pipeline accepts. Kept in sync with ingest.importable: .acsm/.epub go through
-// the DRM pipeline, .cbz/.cbr are comics (a .cbr is converted to .cbz at import).
+// pipeline accepts via the SINGLE-FILE upload form. Kept in sync with
+// ingest.importable, except .aaxc: that audiobook needs its sibling .voucher,
+// which a one-file upload can't carry, so .aaxc stays drop-in only (drop the
+// .aaxc + .voucher pair into the import dir). .aax is a single file and uploads
+// fine.
 func uploadableExt(ext string) bool {
 	switch ext {
-	case ".acsm", ".epub", ".cbz", ".cbr":
+	case ".acsm", ".epub", ".cbz", ".cbr", ".aax":
 		return true
 	default:
 		return false
 	}
 }
 
-// apiUpload accepts an .acsm, .epub, or .cbz via multipart form and drops it
-// into the import dir, where the watcher runs the same pipeline as a manual file
-// drop. Written atomically (temp + rename) so the watcher never sees a partial
-// file.
+// apiUpload accepts an .acsm, .epub, .cbz, .cbr, or .aax via multipart form and
+// drops it into the import dir, where the watcher runs the same pipeline as a
+// manual file drop. Written atomically (temp + rename) so the watcher never sees
+// a partial file. (.aaxc is not uploadable here: it needs its sibling .voucher,
+// so it is drop-in only.)
 func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 	if s.ImportDir == "" {
 		http.Error(w, "uploads not configured", http.StatusServiceUnavailable)
@@ -283,7 +364,7 @@ func (s *Server) apiUpload(w http.ResponseWriter, r *http.Request) {
 
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
 	if !uploadableExt(ext) {
-		http.Error(w, "only .acsm, .epub, .cbz, or .cbr accepted", http.StatusUnsupportedMediaType)
+		http.Error(w, "only .acsm, .epub, .cbz, .cbr, or .aax accepted (.aaxc needs its .voucher: drop both into the import dir)", http.StatusUnsupportedMediaType)
 		return
 	}
 	name := fileutil.SafeFilename(strings.TrimSuffix(filepath.Base(hdr.Filename), ext)) + ext
@@ -346,18 +427,97 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// needsSetup reports whether the first-run setup form should be shown: a DRM
-// sidecar exists, is reachable, and is not yet configured. Any uncertainty
-// (no sidecar, unreachable) returns false so the normal library still renders.
-func (s *Server) needsSetup(ctx context.Context) bool {
-	if s.DRM == nil {
-		return false
+// apiSetupAudiobook stores the Audible activation bytes from the first-run form.
+// Two modes (the form's "mode" field):
+//
+//	bytes  -> paste 8 hex activation-byte chars directly (the reliable path)
+//	login  -> Audible email/password; the sidecar retrieves the bytes (may be
+//	          unavailable in a given build, which returns a clear error)
+//
+// Either way the bytes land in /secrets via the sidecar; the section disappears
+// once configured.
+func (s *Server) apiSetupAudiobook(w http.ResponseWriter, r *http.Request) {
+	if s.Audible == nil {
+		http.Error(w, "audiobook sidecar not configured", http.StatusServiceUnavailable)
+		return
 	}
-	configured, err := s.DRM.Configured(ctx)
+	switch r.FormValue("mode") {
+	case "login":
+		mail := r.FormValue("mail")
+		password := r.FormValue("password")
+		if mail == "" || password == "" {
+			http.Error(w, "Audible email and password are required for login retrieval", http.StatusBadRequest)
+			return
+		}
+		// marketplace is the account region (us/uk/de/...); empty defaults to us.
+		res, err := s.Audible.SetupLogin(r.Context(), mail, password, r.FormValue("marketplace"))
+		s.writeLoginResult(w, res, err)
+	case "otp":
+		// Step 2: deliver the 2FA code to the parked login.
+		res, err := s.Audible.SetupLoginOTP(r.Context(), r.FormValue("login_id"), r.FormValue("otp"))
+		s.writeLoginResult(w, res, err)
+	default: // "bytes" (paste) is the default and reliable path
+		bytesHex := strings.TrimSpace(r.FormValue("bytes"))
+		if bytesHex == "" {
+			http.Error(w, "activation bytes are required", http.StatusBadRequest)
+			return
+		}
+		if err := s.Audible.SetupBytes(r.Context(), bytesHex); err != nil {
+			http.Error(w, "audiobook setup failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if strings.Contains(r.Header.Get("Accept"), "application/json") {
+			writeJSON(w, map[string]bool{"configured": true})
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+// writeLoginResult renders a login step's outcome as JSON for the setup JS: an
+// error, an OTP prompt (otp_required + login_id), or success (configured).
+func (s *Server) writeLoginResult(w http.ResponseWriter, res audible.LoginResult, err error) {
 	if err != nil {
-		return false // sidecar unreachable; don't block the library on it
+		w.WriteHeader(http.StatusBadGateway)
+		writeJSON(w, map[string]any{"error": "audiobook setup failed: " + err.Error()})
+		return
 	}
-	return !configured
+	if res.OTPRequired {
+		writeJSON(w, map[string]any{"otp_required": true, "login_id": res.LoginID, "message": res.Message})
+		return
+	}
+	writeJSON(w, map[string]bool{"configured": true})
+}
+
+// setupState tells the index template which first-run setup sections to show.
+// Each sidecar is independent (the "one / other / both / none" design): a
+// section appears only when that sidecar is enabled (client non-nil), reachable,
+// and not yet configured. The library renders normally regardless; setup is a
+// banner above it, not a gate.
+type setupState struct {
+	Ebook     bool // ebook (Adobe) sidecar needs setup
+	Audiobook bool // audiobook (activation bytes) sidecar needs setup
+}
+
+// Any reports whether any setup section should be shown.
+func (s setupState) Any() bool { return s.Ebook || s.Audiobook }
+
+// setupState probes both sidecars. Any uncertainty for a sidecar (nil client or
+// unreachable) leaves that section hidden, so a down or absent sidecar never
+// blocks or clutters the library.
+func (s *Server) setupState(ctx context.Context) setupState {
+	var st setupState
+	if s.DRM != nil {
+		if configured, err := s.DRM.Configured(ctx); err == nil {
+			st.Ebook = !configured
+		}
+	}
+	if s.Audible != nil {
+		if configured, err := s.Audible.Configured(ctx); err == nil {
+			st.Audiobook = !configured
+		}
+	}
+	return st
 }
 
 func (s *Server) apiScan(w http.ResponseWriter, r *http.Request) {

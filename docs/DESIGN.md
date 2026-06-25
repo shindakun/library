@@ -125,8 +125,8 @@ the thing we're replacing.
                      │   └─ SQLite catalog   modernc.org/sqlite     │
                      └───────┬───────────────────────────────┬──────┘
                              │ files in/out                   │ exec, rarely
-                  ┌──────────▼──────────┐          ┌──────────▼──────────────────-───┐
-                  │ /data/library/*.epub│          │ drm-sidecar (python, --rm)      │
+                  ┌──────────▼──────────┐          ┌──────────▼──────────────────────┐
+                  │ /data/library/*.epub│          │ ebook-sidecar (python, --rm)    │
                   │ /data/catalog.db    │          │  fulfill.py → ineptepub.py      │
                   │ /data/import/  (in) │          │  mounts: /secrets (activation,  │
                   │ /secrets/  (.der,   │          │          .der), /work (job tmp) │
@@ -273,11 +273,16 @@ GET  /static/...             embedded CSS/JS/vendor assets
 
 # --- OPDS (consumed by any OPDS client) ---
 GET  /opds                   root navigation feed (links to subsections)
-GET  /opds/new               recently added (acquisition feed)
-GET  /opds/all               full acquisition feed (paginated, rel=next/prev)
-GET  /opds/search?q=         search results as an acquisition feed
+GET  /opds/new               recently added (acquisition feed; excludes audio)
+GET  /opds/all               full acquisition feed (paginated; excludes audio)
+GET  /opds/search?q=         search results as an acquisition feed (excludes audio)
+GET  /opds/audiobooks        audio-only acquisition feed (audio/mp4)
 GET  /opds/opensearch.xml    OpenSearch description doc
 ```
+
+The e-reader feeds (`/new`, `/all`, `/search`) exclude audiobooks because the
+verified target device (Xteink X4) is e-ink and cannot play audio; audiobooks
+have their own `/opds/audiobooks` feed for audio-capable clients.
 
 Per-author and per-series OPDS navigation feeds are a possible future addition;
 v1 ships the root, new, all, and search feeds above.
@@ -386,7 +391,7 @@ The stack is two containers orchestrated by compose:
 
 - **library** (Go): built from `docker/Dockerfile` (distroless, repo-root build
   context), serves `:8080`, mounts `./data`.
-- **drm-sidecar** (Python): built from `docker/sidecar/Dockerfile`, mounts
+- **ebook-sidecar** (Python): built from `docker/ebook-sidecar/Dockerfile`, mounts
   `./secrets` and `./data`.
 
 Two compose files exist: `docker/docker-compose.yml` (the macOS Podman dev file,
@@ -429,7 +434,7 @@ load-bearing for the import pipeline.
    end up owned by a remapped UID.
 
 2. **Service-name DNS → explicit bridge network.** The Go service reaches the sidecar at
-   `http://drm-sidecar:7000`. Container-to-container name resolution is provided by
+   `http://ebook-sidecar:7000`. Container-to-container name resolution is provided by
    `aardvark-dns`, which is reliable on an explicitly-declared custom network. Some rootless
    Podman / podman-compose version combos have had DNS regressions on the *implicit* default
    network, so we declare `libnet` and attach both services to it.

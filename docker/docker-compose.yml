@@ -7,7 +7,7 @@
 #    container user to a high subordinate UID and the import pipeline can't hand
 #    files between containers (or you can't read them on the host).
 #  - The explicit `libnet` network guarantees aardvark-dns service-name resolution
-#    (drm-sidecar:7000), sidestepping rootless default-network DNS regressions.
+#    (ebook-sidecar:7000), sidestepping rootless default-network DNS regressions.
 #  - Bind mounts carry :z / :Z for SELinux hosts (Fedora/RHEL). :Z = private relabel
 #    (secrets), :z = shared relabel (data volume used by both containers). On
 #    non-SELinux hosts these suffixes are harmless no-ops.
@@ -27,17 +27,19 @@ services:
       # The X4 reaches this server over the LAN. Set to the host's LAN IP so the
       # OPDS feed emits links the device can actually fetch. Override per-host.
       LIBRARY_BASE_URL: ${LIBRARY_BASE_URL:-http://localhost:8080}
-      DRM_SIDECAR_URL: http://drm-sidecar:7000
+      EBOOK_SIDECAR_URL: http://ebook-sidecar:7000
+      AUDIOBOOK_SIDECAR_URL: http://audiobook-sidecar:7100
     volumes:
       - ../data:/data:z         # books, catalog.db, import/ (watched)
     networks:
       - libnet
     depends_on:
-      - drm-sidecar
+      - ebook-sidecar
+      - audiobook-sidecar
     restart: unless-stopped
 
-  drm-sidecar:
-    build: ./sidecar
+  ebook-sidecar:
+    build: ./ebook-sidecar
     userns_mode: keep-id
     # Not published to the host; only reachable on the internal compose network.
     environment:
@@ -49,6 +51,21 @@ services:
       - ../secrets:/secrets:Z    # activation + .der key; writable so the web
                                  # first-run setup can populate it (Z = private relabel)
       - ../data:/data:z          # same data volume; sidecar reads import/, writes results there
+    networks:
+      - libnet
+    restart: unless-stopped
+
+  # Audiobook DRM (Audible .aax -> clean .m4b via ffmpeg). Optional, like the
+  # ebook sidecar: unset AUDIOBOOK_SIDECAR_URL on the library service to disable.
+  audiobook-sidecar:
+    build: ./audiobook-sidecar
+    userns_mode: keep-id
+    environment:
+      SECRETS_DIR: /secrets
+      WORK_DIR: /data/import/work # same scratch dir, OUTSIDE the watched root
+    volumes:
+      - ../secrets:/secrets:Z    # holds audible_activation_bytes; writable for setup
+      - ../data:/data:z
     networks:
       - libnet
     restart: unless-stopped

@@ -87,7 +87,8 @@ type editPayload struct {
 	Publisher   *string `json:"publisher"`
 	Description *string `json:"description"`
 	Published   *string `json:"published"`
-	Tags        *string `json:"tags"` // comma-separated
+	Tags        *string `json:"tags"`     // comma-separated
+	Narrator    *string `json:"narrator"` // audiobook-only
 }
 
 // toEdits converts the wire payload into catalog.Edits. The catalog re-sanitizes
@@ -102,6 +103,7 @@ func (p editPayload) toEdits() catalog.Edits {
 	e.Publisher = p.Publisher
 	e.Description = p.Description
 	e.Published = p.Published
+	e.Narrator = p.Narrator
 	if p.Authors != nil {
 		authors := splitList(*p.Authors)
 		e.Authors = &authors
@@ -119,10 +121,14 @@ func (p editPayload) toEdits() catalog.Edits {
 }
 
 // apiUpdateBook applies a metadata edit. The catalog edit (the durable change) is
-// written synchronously and fast. The file embed can be slow (a large comic
-// re-zips every page), so it runs in the BACKGROUND as a tracked job: the
-// response returns immediately with the new book + a jobId, and the client
-// watches the existing import-job SSE stream for embed progress and completion.
+// written synchronously and fast. For formats whose metadata lives INSIDE the
+// file (epub OPF, comic ComicInfo.xml), the change is then embedded into the file
+// in the BACKGROUND as a tracked job (a large comic re-zips every page): the
+// response carries a jobId the client watches over the import SSE stream.
+//
+// Audiobooks are NOT rewritten (internal/audio is read-only): the edit is
+// catalog-only, so no embed job is started and the response carries no jobId
+// (embedded=false). The client just shows "Saved".
 func (s *Server) apiUpdateBook(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	r.Body = http.MaxBytesReader(w, r.Body, maxEditBody)
@@ -138,7 +144,13 @@ func (s *Server) apiUpdateBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := s.startEmbedJob(updated)
+	// Only formats whose metadata is embedded in the file get a background embed
+	// job; an audiobook edit is catalog-only.
+	jobID := ""
+	embeds := updated.Format != "audio"
+	if embeds {
+		jobID = s.startEmbedJob(updated)
+	}
 
 	writeJSON(w, map[string]any{
 		"book": map[string]any{
@@ -146,7 +158,8 @@ func (s *Server) apiUpdateBook(w http.ResponseWriter, r *http.Request) {
 			"title":   updated.Title,
 			"authors": updated.Authors,
 		},
-		"jobId": jobID,
+		"jobId":  jobID,
+		"embeds": embeds,
 	})
 }
 

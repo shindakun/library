@@ -101,9 +101,22 @@ check-clock: ## Warn if the Podman VM clock is skewed (used as an `up` guard)
 images: ## Build both container images
 	$(DC) build
 
+# Services are started ONE AT A TIME (not in a single `up`) on purpose. On
+# rootless Podman, creating/starting several `userns_mode: keep-id` containers
+# concurrently races in the docker-compat layer and crun intermittently rejects
+# the container (seen as either a ping_group_range or a devpts mount "Invalid
+# argument" error). Serializing the starts avoids the race entirely; a clean
+# `up` then succeeds every time. Sidecars come up before the library, which
+# depends on them. SERVICES lists them in start order.
+SERVICES := ebook-sidecar audiobook-sidecar library
+
 .PHONY: up
 up: check-clock ## Build (if needed) and start the stack in the background
-	LIBRARY_BASE_URL=$(LIBRARY_BASE_URL) $(DC) up -d --build
+	$(DC) build
+	@for svc in $(SERVICES); do \
+		echo ">> starting $$svc"; \
+		LIBRARY_BASE_URL=$(LIBRARY_BASE_URL) $(DC) up -d --no-deps $$svc || exit $$?; \
+	done
 
 .PHONY: down
 down: ## Stop and remove the stack
@@ -167,12 +180,17 @@ prod-deploy: ## Pull newest images and restart the prod stack in place
 	$(DC_PROD) pull
 	$(DC_PROD) up -d
 
-## ---- DRM setup ----
+## ---- DRM setup (per sidecar) ----
 
-.PHONY: drm-setup
-drm-setup: ## One-time: authorize Adobe + export key into ./secrets (interactive)
-	$(DC) build drm-sidecar
-	$(COMPOSE) -f $(COMPOSE_FILE) run --rm --userns=keep-id drm-sidecar python /opt/setup.py
+.PHONY: ebook-setup
+ebook-setup: ## One-time: authorize Adobe + export key into ./secrets (interactive)
+	$(DC) build ebook-sidecar
+	$(COMPOSE) -f $(COMPOSE_FILE) run --rm --userns=keep-id ebook-sidecar python /opt/setup.py
+
+.PHONY: audiobook-setup
+audiobook-setup: ## One-time: store Audible activation bytes (BYTES=8hexchars), or use the web form
+	@test -n "$(BYTES)" || { echo "usage: make audiobook-setup BYTES=<8 hex chars>"; exit 1; }
+	curl -fsS -X POST http://localhost:7100/setup -d '{"bytes":"$(BYTES)"}' && echo
 
 ## ---- Housekeeping ----
 
