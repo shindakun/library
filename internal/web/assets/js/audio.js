@@ -14,7 +14,8 @@
   let chapters = []; // [{title, start}]
   let duration = 0;
   let current = -1; // index of the highlighted chapter
-  let saveTimer = null;
+  let lastSaved = -1; // wall-clock ms of the last save (for throttling)
+  let restored = false; // true once the saved position has been applied
 
   function fmt(secs) {
     secs = Math.max(0, Math.floor(secs || 0));
@@ -59,31 +60,49 @@
 
   function highlight(idx) {
     if (idx === current) return;
-    const prev = list.querySelector(".chapter.active");
-    if (prev) prev.classList.remove("active");
-    if (idx >= 0) {
-      const el = list.querySelector('.chapter[data-i="' + idx + '"]');
-      if (el) el.classList.add("active");
-      nowChapter.textContent = chapters[idx] ? (chapters[idx].title || "Chapter " + (idx + 1)) : "";
-    } else {
-      nowChapter.textContent = "";
+    if (list) {
+      const prev = list.querySelector(".chapter.active");
+      if (prev) prev.classList.remove("active");
+      if (idx >= 0) {
+        const el = list.querySelector('.chapter[data-i="' + idx + '"]');
+        if (el) el.classList.add("active");
+      }
+    }
+    if (nowChapter) {
+      nowChapter.textContent = (idx >= 0 && chapters[idx]) ? (chapters[idx].title || "Chapter " + (idx + 1)) : "";
     }
     current = idx;
   }
 
-  function saveSoon() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(function () {
-      const t = player.currentTime || 0;
-      const total = duration || player.duration || 0;
-      const percent = total ? t / total : 0;
-      fetch("/api/books/" + encodeURIComponent(slug) + "/read", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        // cfi carries the elapsed seconds for audio; percent is seconds/duration.
-        body: JSON.stringify({ cfi: String(Math.floor(t)), percent: percent }),
-      }).catch(function () {});
-    }, 1000);
+  // Persist the current position. cfi carries the elapsed seconds (mirroring how
+  // comics store the page number there); percent is seconds/duration. We do NOT
+  // save before the saved position has been restored, otherwise the very first
+  // timeupdate (at ~0s) would clobber the real saved spot with 0.
+  function saveNow() {
+    if (!restored) return;
+    const t = player.currentTime || 0;
+    const total = duration || player.duration || 0;
+    const percent = total ? t / total : 0;
+    lastSaved = nowMs();
+    fetch("/api/books/" + encodeURIComponent(slug) + "/read", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cfi: String(Math.floor(t)), percent: percent }),
+    }).catch(function () {});
+  }
+
+  function nowMs() {
+    return (window.performance && performance.now) ? performance.now() : Date.now();
+  }
+
+  // THROTTLE (not debounce): timeupdate fires ~4x/sec, far faster than any
+  // useful save interval. A debounce that resets on every tick never fires until
+  // playback stops, the original bug where position only saved on pause. Instead
+  // save at most once every SAVE_INTERVAL_MS while time advances.
+  var SAVE_INTERVAL_MS = 5000;
+  function saveThrottled() {
+    if (!restored) return;
+    if (lastSaved < 0 || nowMs() - lastSaved >= SAVE_INTERVAL_MS) saveNow();
   }
 
   window.audioSkip = function (delta) {
@@ -93,34 +112,42 @@
 
   player.addEventListener("timeupdate", function () {
     highlight(chapterAt(player.currentTime || 0));
-    saveSoon();
+    saveThrottled();
   });
-  // Save promptly on pause and when leaving the page, so position isn't lost.
-  player.addEventListener("pause", saveSoon);
+  // Save promptly (not throttled) on pause and after a seek, so a deliberate
+  // stop or scrub is captured even if the user closes the page right after.
+  player.addEventListener("pause", saveNow);
+  player.addEventListener("seeked", saveNow);
+  // Final save on leave: sendBeacon survives unload. Guarded by `restored` like
+  // the others so an immediate close before restore can't persist 0.
   window.addEventListener("pagehide", function () {
+    if (!restored) return;
     const t = player.currentTime || 0;
     const total = duration || player.duration || 0;
     const body = JSON.stringify({ cfi: String(Math.floor(t)), percent: total ? t / total : 0 });
-    // sendBeacon survives unload; fall back to a best-effort fetch.
     if (navigator.sendBeacon) {
       navigator.sendBeacon("/api/books/" + encodeURIComponent(slug) + "/read",
         new Blob([body], { type: "application/json" }));
     }
   });
 
-  // Restore the saved position once the audio can seek.
-  let restored = false;
+  // Restore the saved position once the audio knows its duration and can seek.
+  // loadedmetadata can fire before duration is finite for a streamed file, so we
+  // also try on durationchange/canplay and only mark restored once we've actually
+  // applied it (or confirmed there's nothing to restore).
   function restore() {
     if (restored) return;
-    const start = Math.max(0, window.START_SECONDS || 0);
-    if (start > 0 && isFinite(player.duration)) {
-      player.currentTime = Math.min(start, player.duration - 1);
-    }
+    const start = Math.max(0, Number(window.START_SECONDS) || 0);
+    if (start <= 0) { restored = true; return; } // nothing saved; allow saving
+    if (!isFinite(player.duration) || player.duration <= 0) return; // not ready; retry later
+    player.currentTime = Math.min(start, player.duration - 1);
     restored = true;
   }
+  player.addEventListener("loadedmetadata", restore);
+  player.addEventListener("durationchange", restore);
+  player.addEventListener("canplay", restore);
   player.addEventListener("loadedmetadata", function () {
     if (!duration) duration = player.duration || 0;
-    restore();
   });
 
   // Fetch chapters + duration, then build the list.
