@@ -134,7 +134,13 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "audio.html", map[string]any{"Book": b, "StartSeconds": start})
 		return
 	}
-	s.render(w, "reader.html", map[string]any{"Book": b})
+	// epub: restore the saved EPUB CFI (an epub.js content-fragment string) so
+	// the reader resumes where the user left off, like comics and audio do.
+	startCFI := ""
+	if _, cfi := s.Cat.ReadState(r.Context(), b.ID); cfi != "" {
+		startCFI = cfi
+	}
+	s.render(w, "reader.html", map[string]any{"Book": b, "StartCFI": startCFI})
 }
 
 func (s *Server) file(w http.ResponseWriter, r *http.Request) {
