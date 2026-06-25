@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,17 +16,32 @@ import (
 	"github.com/steve/library/internal/catalog"
 )
 
-// buildM4B writes a tiny tagged audiobook .m4b at out using ffmpeg (a test-only
-// dependency; the importer never shells out). Skips if ffmpeg is absent.
-func buildM4B(t *testing.T, out string) {
+// requireFFmpeg skips the calling test if ffmpeg is unavailable. It MUST be
+// called from the test goroutine (not a server handler), because t.Skip only
+// works there.
+func requireFFmpeg(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed; skipping audiobook import test")
 	}
-	meta := filepath.Join(t.TempDir(), "ff.txt")
+}
+
+// buildM4B writes a tiny tagged audiobook .m4b at out using ffmpeg (a test-only
+// dependency; the importer never shells out). It is called from the mock
+// sidecar's HTTP handler goroutine, so it must NOT call t.Skip/t.Fatal (those
+// are illegal off the test goroutine); it returns an error instead. Callers gate
+// on requireFFmpeg(t) up front, so by here ffmpeg is present and this only fails
+// on a genuine ffmpeg error.
+func buildM4B(out string) error {
+	dir, err := os.MkdirTemp("", "ff")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	meta := filepath.Join(dir, "ff.txt")
 	const ffmeta = ";FFMETADATA1\ntitle=Imported Audiobook\nartist=Imported Author\nalbum_artist=The Narrator\n"
 	if err := os.WriteFile(meta, []byte(ffmeta), 0o644); err != nil {
-		t.Fatal(err)
+		return err
 	}
 	cmd := exec.Command("ffmpeg",
 		"-nostdin", "-hide_banner", "-loglevel", "error",
@@ -33,8 +49,9 @@ func buildM4B(t *testing.T, out string) {
 		"-i", meta, "-map", "0:a", "-map_metadata", "1",
 		"-c:a", "aac", "-b:a", "32k", "-movflags", "+faststart", out)
 	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("ffmpeg m4b build failed: %v\n%s", err, b)
+		return fmt.Errorf("ffmpeg m4b build failed: %v\n%s", err, b)
 	}
+	return nil
 }
 
 // mockAudibleSidecar serves the /job decrypt contract: on a decrypt request it
@@ -57,11 +74,18 @@ func mockAudibleSidecar(t *testing.T, workDir string) *audible.Client {
 			_ = json.Unmarshal(body, &req)
 			base := filepath.Base(req.Input)
 			base = base[:len(base)-len(filepath.Ext(base))]
+			// This runs in the server goroutine: never call t.Fatal/Skip here.
+			// On error, return a 500 so the importer fails the job and the test
+			// surfaces it (ffmpeg is guaranteed present by requireFFmpeg up front).
 			if err := os.MkdirAll(workDir, 0o755); err != nil {
-				t.Fatal(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 			out := filepath.Join(workDir, base+".m4b")
-			buildM4B(t, out)
+			if err := buildM4B(out); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			resp := map[string]any{"ok": true, "output": out, "format": "m4b"}
 			_ = json.NewEncoder(w).Encode(resp)
 		default:
@@ -78,6 +102,7 @@ func mockAudibleSidecar(t *testing.T, workDir string) *audible.Client {
 // the dropped .aax is archived. Exercises the .aax branch in pipeline(),
 // decryptAudible, verify() for .m4b, and the shared tail together.
 func TestImportAudiobookEndToEnd(t *testing.T) {
+	requireFFmpeg(t) // the mock sidecar builds a real .m4b with ffmpeg
 	dir := t.TempDir()
 	importDir := filepath.Join(dir, "import")
 	libraryDir := filepath.Join(dir, "library")
@@ -192,6 +217,7 @@ func TestImportAudiobookWithoutSidecar(t *testing.T) {
 // through the mock sidecar, and asserts both the .aaxc AND the voucher are
 // archived to done/ (the voucher must not be orphaned in the import root).
 func TestImportAaxcMovesVoucher(t *testing.T) {
+	requireFFmpeg(t) // the mock sidecar builds a real .m4b with ffmpeg
 	dir := t.TempDir()
 	importDir := filepath.Join(dir, "import")
 	libraryDir := filepath.Join(dir, "library")
